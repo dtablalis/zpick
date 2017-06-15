@@ -1,1 +1,5199 @@
+report zelv_orders_not_produced
+  no standard page heading
+*  line-size 255
+  line-count  15
+  .
 
+
+*----------------------------------------------------------------------*
+*- Table declaration
+*----------------------------------------------------------------------*
+tables : vbap,
+         vbpa,
+         vbuk,
+         bkpf,
+         vbup,
+         likp,
+         lips,
+         vbak,
+         kna1,
+         vbfa,
+         vbep,
+         t005,
+         t179,
+         prodh,
+         chvw,
+         adrc,
+         zweighterror,
+         zetem_colour,
+         s835,
+         vbbe, "ARISK+
+         marm,
+         tvkol,
+         mbew.
+
+
+*----------------------------------------------------------------------*
+*- Data declaration
+*----------------------------------------------------------------------*
+type-pools:  kkblo.
+
+types: begin of typ_orders,
+         check,
+         mbdat like vbep-mbdat,
+         vbeln like vbap-vbeln,
+         posnr like vbap-posnr,
+         sold_to(30),
+          ship_to(30),
+         matkl like vbap-matkl,
+         matnr like mara-matnr,
+         length(15),
+         st_length(15),
+         profil(15),
+         color(15),
+         color_up(15),
+         color_down(15),
+         wmeng like vbep-wmeng,
+         bmeng like vbep-bmeng,
+         dif_deliv_q like vbep-wmeng,
+         make_to_order like vbep-wmeng,
+         make_to_stock like vbep-wmeng,
+         m_of_pay(3),
+         zterm(3),
+         weekno like rvdat-extdatum,
+         weekno_2(7),
+         vrkme like vbap-vrkme,
+         abrvw like vbak-abrvw,
+         kwmeng like vbap-kwmeng,
+         ntgew like vbap-ntgew, "Theoretical KG of Sal.Order
+         xref1_hd type p decimals 0 , "vbep-wmeng,
+         xref2_hd type p decimals 3 , "LIKE vbep-wmeng,
+*         z001 like vbbk-z001,
+         zmenge like vbep-wmeng,
+         av_qty like vbep-wmeng,    "+DT 31.10.12 Avail.QTY
+         sp_stock like vbep-wmeng, "@dt20131112 Special Stock
+         av_mm(3) type c,
+         charg like vbap-charg,
+         text like tline-tdline,
+          line_color(4) type c,
+         light(20),
+         flag(1),
+* ARISK+ -->
+         vmeng like vbbe-vmeng,
+* ARISK+ <--
+* DP+ --> 22/10/2008
+         tmenge  like vbep-wmeng, "Theoretical Weight
+         w_diff(1),
+* DP+ <--
+         oldmat(20) type c,
+       end of typ_orders.
+
+types: begin of typ_ordlin,
+        vbeln like vbrk-vbeln,
+        lincnt type i,
+      end of typ_ordlin.
+
+types: begin of typ_move,
+         mblnr like chvw-mblnr,
+         mjahr like chvw-mjahr,
+       end of typ_move..
+
+data: wa_vkorg like vbak-vkorg,
+      V_pageno like sy-tabix,
+      old_pageno like sy-tabix.
+
+**data : begin of i_sums occurs 0.
+**        include structure zorders_not_produced.
+**data:
+**  prop_bat  like mcha-charg, "Proposed batch
+**  theorqty like mseg-menge,
+**  color_up(15) type c,
+**  color_down(15) type c,
+**  vbeln like vbap-vbeln, "+DT20130415
+**  posnr like vbap-posnr, "+DT20130415
+**  check type c.
+**data: end of i_sums.
+
+data: i_sums like TABLE OF ZORDERS_ISUMS with HEADER LINE.
+
+data: tv_lgort like tvkol-lgort.
+
+data: propose type flag.
+data : i_data type table of ZORDERS_IDATALIN WITH HEADER LINE .
+
+            " typ_orders occurs 0 with header line .
+data : i_olines type typ_ordlin occurs 0 with header line .
+data : i_moves type typ_move occurs 0 with header line.
+
+data: begin of i_config occurs 0.
+        include structure conf_out.
+data: end of i_config.
+
+data: begin of inlines occurs 0.
+        include structure tline.
+data: end of inlines.
+
+data: begin of i_lines occurs 0.
+        include structure tline.
+data: end of i_lines.
+
+data: begin of i_konv occurs 0.
+        include structure komv.
+data: end of i_konv.
+
+data: begin of i_konvd occurs 0.
+        include structure komvd.
+data: end of i_konvd.
+
+data: invtotal like bseg-dmbtr.
+
+data: vspart like vbap-spart.
+
+data : new(1),
+       newc(1),
+       index type i,
+       odd   type i,
+       col_pos type i.
+
+data:  ylines type i,
+       wlines type p decimals 2,
+       clines(5) type c,
+       lin(1) type c,
+       descr(20) type c,
+       cpcs(8) type c,
+       ckg(8) type c,
+       field2(10) type c,
+       field3(40) type c.
+
+*             prood LIKE chvw-menge.
+
+data: begin of i_doc occurs 0,
+   vbeln like vbak-vbeln,
+   sold like vbak-kunnr,
+   ship like vbak-kunnr,
+   end of i_doc.
+
+data:
+      int_date like sy-datum,
+      menge like chvw-menge,
+
+      length(10),
+      color(10),
+      profil(10),
+      issued_by(15) type c,
+      issued_date(10) type c.
+
+constants : c_completed like vbuk-gbstk value 'C',
+            c_rep1 like vbpa-parvw value 'Z1',
+            c_rep2 like vbpa-parvw value 'Z2'.
+data bwtar type bwtar_d.
+data  do_back.
+data  do_split .
+
+data  ok_code  like sy-ucomm .
+data  saved_ok like sy-ucomm .
+data  sums_preview.
+
+
+
+data : begin of c_vgpos_loc occurs 0,
+        vgbel like lips-vgbel,
+        vgpos like lips-vgpos,
+       end of c_vgpos_loc.
+
+data: zpick_id(6) type c. "+DT20130327
+
+
+include j_2gbii00..
+
+data wa_txt2(20) type c .
+data:
+     bdc like bdcdata occurs 0 with header line.
+data wmt_vbsk_buffer_nast like vbsk  .
+data mt_vbsk_buffer_nast type shp_vbsk_t.
+data msgno like sy-msgno.
+data hmessage like help_info-message.
+data: mitab like bdcmsgcoll occurs 0 with header line.
+
+data: begin of mesitab occurs 0.
+data vbeln like likp-vbeln.
+data posnr like lips-posnr.
+data vgbel like lips-vbeln.
+data vgpos like lips-vgpos.
+data i_data-xref1_hd like vbep-bmeng.
+data i_data-xref2_hd like vbep-bmeng.
+data unit2(5).
+        include structure bdcmsgcoll.
+data: end of mesitab .
+
+data  weight_dif.              " DP+ 22/10/2008
+data: myvdatu like vbak-vdatu. " DP+ 22/10/2008
+
+
+data my_lips type table of lips with header line.
+data:   messtab1 like bdcmsgcoll occurs 0 with header line.
+
+
+types : begin of str_ch,
+          matnr like mara-matnr,
+          profil(15),
+          color(15),
+          length(15),
+          ref_vbeln like vbap-vbeln, "+DT20130415
+          ref_posnr like vbap-posnr, "+DT20130415
+          i type i,
+          kel_check,
+        end of str_ch.
+
+types : begin of str_ch_vbeln,
+          vbeln like vbap-vbeln,
+          posnr like vbap-posnr,
+          bedae like vbap-bedae,
+          matnr like mara-matnr,
+          profil(15),
+          color(15),
+          length(15),
+          i type i,
+          kel_check,
+  end of str_ch_vbeln.
+
+data : ch type table of str_ch with header line.
+data : ch_vbeln type table of str_ch_vbeln with header line.
+
+
+
+*----------------------------------------------------------------------*
+*- Selection screen
+*----------------------------------------------------------------------*
+selection-screen begin of block b01 with frame title text-b01.
+parameters       : p_vkorg like vbrk-vkorg obligatory
+                                      memory id vko.
+
+select-options:  s_prodh for t179-prodh no-display,
+                 s_edatu for vbep-edatu,
+                 s_vbeln for vbap-vbeln,
+                 s_kunnr   for likp-kunag,
+                 sh_kunr for likp-kunnr,
+                 s_spart for vbap-spart,
+                 s_abrvw for vbak-abrvw.
+selection-screen end of block b01.
+
+selection-screen begin of block b03 with frame title text-b03.
+parameters : p_pra4 as checkbox default 'X',
+             p_sort as checkbox default 'X'.
+selection-screen end of block b03.
+
+selection-screen begin of block b02 with frame title text-b02.
+*SELECT-OPTIONS:  s_alloy FOR i_config-atwtb,
+*                 s_temper FOR i_config-atwtb,
+*                 s_thick FOR i_config-atwtb,
+*                 s_width FOR i_config-atwtb,
+*                 s_length FOR i_config-atwtb,
+*                 s_diam FOR i_config-atwtb.
+
+select-options:  s_profil for i_config-atwtb no-display,
+                 s_color  for i_config-atwtb no-display,
+                 s_length for i_config-atwtb no-display.
+
+*PARAMETER VARIANT LIKE disvariant.
+
+selection-screen end of block b02.
+
+parameters p_ign no-display.
+*select-options: s_diam for i_config-atwtb.
+parameters p_mode type c default 'N' obligatory .
+
+
+initialization.
+
+* CALL FUNCTION 'SET_PRINT_PARAMETERS'
+*       EXPORTING
+*            archive_mode   = '3'
+*            copies         = '5'
+*            department     = 'BASIS'
+*            destination    = 'LP02'
+*            expiration     = '0'
+*            immediately    = 'X'
+*            layout         = 'X_65_132'
+*            line_count     = 54
+*            line_size      = 20
+*            list_name      = 'Test'
+*            list_text      = 'Test for User''s Guide'
+*            new_list_id    = 'X'
+*            receiver       = 'KELLERH'
+*            release        = ' '
+*            sap_cover_page = 'X'.
+*
+*
+**
+
+
+*----------------------------------------------------------------------*
+start-of-selection.
+*----------------------------------------------------------------------*
+  select single * from vbuk where vbeln in s_vbeln.
+  if vbuk-cmgst = 'B'.
+    if p_vkorg ne '3200'.
+      message i003(z1) with  vbuk-vbeln  'SALES ORDER IS BLOCKED'.
+    endif.
+  endif.
+  if p_vkorg = '3200' or p_vkorg = '3500' or p_vkorg = '3100'.
+    p_ign = ' '.
+  else.
+    p_ign = 'X'.
+
+  endif.
+  .
+*- Get data
+  perform get_data.
+* NA+ 23/10/2008
+  myvdatu = sy-datum + '30'.
+* NA+ 23/10/2008
+
+end-of-selection.
+
+* Create isums internal table.
+  perform create_isums.
+
+* Call screen to enter pieces etc.
+  call screen '050' .
+  if  do_back = 'X' .
+    exit .
+  endif .
+  if do_split = 'X' .
+    perform split .
+    perform write_list.
+  endif .
+
+at selection-screen.
+  perform check_number using: s_profil.
+  perform check_fields . " eNHANCEMENT 16-03-2007
+
+top-of-page.
+  if sums_preview = space .
+    col_pos = ( sy-linsz - 20 ) - strlen( text-002 ).
+    write at col_pos 'Page:'(002).
+    write: sy-pagno.
+    col_pos = ( sy-linsz - 20 ) - strlen( text-003 ).
+    write:/.
+    write at col_pos '                    Date:'(003).
+    write: sy-datum.
+    col_pos = ( sy-linsz - strlen( text-001 ) ) / 2.
+
+    write:/.
+    write at col_pos text-a01 .
+
+*
+    perform head2.
+  else .
+
+    format color col_heading .
+*     write at :/1(131) sy-uline .
+*     write :
+*      /1(1)   sy-vline ,
+*      2(35)   'ÐåëÜôçò' ,
+*      38(1)    sy-vline ,
+*     40(10)   'Ðñïößë' ,
+*     51(1)    sy-vline ,
+*     53(9)    'ÌÞêïò' ,
+*     63(1)    sy-vline ,
+*     65(10)   '×ñþìá' ,
+*     76(1)    sy-vline ,
+*     78(10)   'Ðïóüôçôá' ,
+*     89(1)    sy-vline ,
+*     91(5)    'ÌÌ' ,
+*     97(1)    sy-vline ,
+*     99(10)   'ÔÌ×' ,
+*    110(1)    sy-vline ,
+*    112(17)   'ÊÉË' ,
+*    131(1)    sy-vline.
+*   write at :/1(131) sy-uline .
+    write at :/1(215) sy-uline .
+    write :
+     /1(1)   sy-vline ,
+     2(35)   text-a02 ,
+     38(1)    sy-vline ,
+    40(10)   text-a03,
+    51(1)    sy-vline ,
+    53(18)   text-a04,
+    73(1)    sy-vline,
+    75(9)    text-a05  ,
+    85(1)    sy-vline ,
+    87(10)   text-a06,
+    98(1)    sy-vline ,
+    100(10)   text-a07 ,
+    111(1)    sy-vline ,
+    113(10)  text-a08,
+    125(1)   sy-vline,
+    127(5)   text-a09 ,
+    133(1)    sy-vline ,
+    135(10)   text-a10 ,
+   146(1)    sy-vline ,
+   148(17)   text-a11 ,
+   167(1)    sy-vline,
+   169(30)   text-a12,
+   201(1)    sy-vline,
+   202(13)   text-a13,
+   215(1)    sy-vline.
+    write at :/1(215) sy-uline .
+
+
+    format reset .
+
+  endif .
+*---------------------------------------------------------------------*
+*       FORM head2                                                    *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+form head2.
+  uline.
+
+  format color col_key intensified off.
+  write:/ sy-vline, 'ÁÑ. '(t10), sy-vline,
+                    'ÁÑ. '(t17), sy-vline,
+                    'ÓÕ. '(t07), sy-vline,
+                    'ÊÁÔ '(t05), sy-vline,
+                    (10) ' ', sy-vline,
+                    '        Ä É Á Ó Ô Á Ó Å É Ó'(t03), sy-vline,
+                    (4) ' ', sy-vline,
+                    (3) ' ', sy-vline,
+                    '   ÆÇÔÏÕÌÅÍÏ'(t20), sy-vline,
+                    ' ÁÍÅÊÔÅËÅÓÔÏ'(t21), sy-vline,
+                    ' ÐÑÏÏÄÅÕÔÉÊÏ'(t22), sy-vline,
+                    (3)  ' ', sy-vline,
+                    (8)  ' ', sy-vline.
+
+
+  write:/ sy-vline, 'ÐÁÑ.'(010), sy-vline,
+          'ÃÑ.'(017), sy-vline,
+          'ÍÏ'(007), sy-vline,
+          'ÐÑÏ'(005), sy-vline,
+          'ÐÅËÁÔÇÓ'(015), sy-vline,
+          'ÐAXOÓ'(008),
+          ' ÐËÁÔÏÓ'(011),
+          '    ÌÇÊÏÓ'(012), sy-vline,
+          'ÊÑÁÌ'(013), sy-vline,
+          'ÓÊË'(014), sy-vline,
+          '    ÂÁÑÏÓ'(020), sy-vline,
+          '    ÂÁÑÏÓ'(021), sy-vline,
+          '    ÂÁÑÏÓ'(022), sy-vline,
+          (3) ' ', sy-vline,
+          'ÅÂÄ. ÐÁÑ'(023), sy-vline.
+
+
+  format reset.
+  uline.
+endform.                                                    "HEAD2
+
+*---------------------------------------------------------------------*
+*       FORM get_data                                                 *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+form get_data.
+
+
+  data: value1(20),
+       value2(20) ,
+        dbvalue(20).
+
+*CONSTRUCT I_DOC
+  perform get_documents.
+
+
+  loop at i_doc.
+*- Get orders
+    select single * from vbak where
+                        vbeln = i_doc-vbeln
+                    and vkorg = p_vkorg
+                    and abrvw  in s_abrvw.
+
+
+
+
+    check sy-subrc = 0.
+
+    check: not vbak-vbtyp = 'K',
+           not vbak-vbtyp = 'L'.
+
+    if vbak-vbtyp = 'H'.
+      check vbak-auart = 'ZRE'.
+    else.
+      check not vbak-vbtyp = 'H'.
+    endif.
+
+
+    select single * from vbuk where vbeln = vbak-vbeln
+                              and   vbtyp = 'C'.
+    check: vbuk-gbstk <> c_completed.
+    select * from vbap where vbeln = vbak-vbeln
+                       and   spart in s_spart.
+      select single * from vbup where vbeln = vbap-vbeln
+                                  and posnr = vbap-posnr.
+      check: vbup-gbsta <> c_completed.
+      check vbap-ntgew <> 0.
+      clear: i_data, i_olines.
+
+
+*get text
+      perform get_text using i_data-text.
+
+*- fill order data
+      clear vbpa.
+      select single * from vbpa where vbeln = vbak-vbeln
+                                and posnr = '000000'
+                                and parvw = 'AG'
+                                and kunnr in s_kunnr.
+      check sy-subrc = 0.
+
+      i_doc-ship =  vbpa-kunnr.
+      clear kna1.
+      select single * from kna1 where kunnr = vbpa-kunnr.
+
+      i_data-sold_to = kna1-name1.
+
+      clear vbpa.
+      select single * from vbpa where vbeln = vbak-vbeln
+                                and posnr = '000000'
+                                and parvw = 'WE'
+                                and kunnr in sh_kunr.
+      check sy-subrc = 0.
+
+
+      i_doc-ship =  vbpa-kunnr.
+
+      clear kna1.
+      select single * from kna1 where kunnr = vbpa-kunnr.
+
+      i_data-ship_to = kna1-name1.
+
+      i_data-abrvw = vbak-abrvw.
+
+      move-corresponding vbap to i_data.
+*mga<<<<<<<<<<
+      constants:
+                _spart like vbap-spart
+                value '30',
+                _spart2 like vbap-spart
+                value '51'.
+
+*mga<<<<<<<<<<
+      perform get_characteristics using vbap-cuobj
+                     changing i_data-profil
+                              i_data-color
+                              i_data-color_up
+                              i_data-color_down
+                              i_data-length
+                              i_data-st_length.
+
+      if vbap-spart = _spart
+          or vbap-spart = _spart2. "@dt20131029
+*        i_data-PROFIL = vbap-arktx.
+        data wa_matnr like mara-matnr.
+        wa_matnr = vbap-matnr.
+        if wa_matnr(1) = '0'.
+          while sy-subrc = 0.
+              shift wa_matnr by 1 places left.
+              if wa_matnr(1) <> '0'.
+                exit.
+              endif.
+          endwhile.
+        endif.
+        i_data-profil = wa_matnr."vbap-matnr.
+      endif.
+
+      check: i_data-profil in s_profil,
+             i_data-length in s_length,
+             i_data-color  in s_color.
+
+
+
+
+*- add up total line count for order
+      i_olines-vbeln = vbak-vbeln.
+      i_olines-lincnt = 1.
+      collect i_olines.
+
+
+
+      perform find_make_to using i_data-make_to_order.
+
+
+      perform collect_vbep.
+
+* ARISK+ -->
+      select * from vbbe where vbeln = i_data-vbeln
+                           and posnr = i_data-posnr.
+        if vbap-umvkz ne 0.
+          i_data-vmeng = i_data-vmeng +
+          ( vbbe-vmeng * vbap-umvkn / vbap-umvkz ).
+        endif.
+
+      endselect.
+* ARISK+ <--
+*
+
+* DP+ --> 22/10/2008
+      if vbak-vdatu gt myvdatu.
+        myvdatu = vbak-vdatu.
+      endif.
+* DP+ <-- 22/10/2008
+
+      append i_data.
+    endselect.
+  endloop.
+
+
+  perform fill_i_data-zmenge.
+
+*+DT 12.10.2012 read old material codes for BG
+  perform get_old_matnr.
+
+  sort i_data.
+
+endform.                    " get_data
+
+*&---------------------------------------------------------------------*
+*&      Form  get_commision
+*&---------------------------------------------------------------------*
+* paid commision is on bsik, bsak with vbrk-belnr to bsik-zuonr
+*&---------------------------------------------------------------------*
+*&      Form  convert_to_KG
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_VBRP_NTGEW  text
+*      <--P_NTGEW  text
+*----------------------------------------------------------------------*
+
+*---------------------------------------------------------------------*
+*       FORM get_characteristics                                      *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+*  -->  CUOBJ                                                         *
+*  -->  ALLOY                                                         *
+*  -->  TEMPER                                                        *
+*  -->  WIDTH                                                         *
+*  -->  LENGTH                                                        *
+*  -->  THICKNESS                                                     *
+*  -->  DIAMETER                                                      *
+*---------------------------------------------------------------------*
+form get_characteristics using    cuobj changing profil
+                                                 color
+                                                 color_up
+                                                 color_down
+                                                 length
+                                                 st_length.
+
+  check: not cuobj is initial.
+  refresh i_config.
+  call function 'VC_I_GET_CONFIGURATION'
+    exporting
+      instance                   = cuobj
+*    BUSINESS_OBJECT             =
+    language                     = sy-langu
+*    PRINT_SALES                 = ' '
+*    PRINT_PURCHASE              = ' '
+*    PRINT_ENGINEERING           = ' '
+*    IDOC_MODE                   = ' '
+*    ANW_SICHT                   = ' '
+*    EXCL_IND                    = ' '
+*    IV_INVALID_POSSIBLE         = ' '
+*    IV_NO_VALUE_CHECK           = 'X'
+*    IV_MAX_MASSPROCESSING       = 0
+*    IV_EXPLICIT_ORGAREA         = ' '
+*    MILL_SE_RECALC              =
+*    MILL_SE_EVAL_DK             =
+  tables
+     configuration               = i_config
+*    CONFIGURATION_IDOC          =
+*    MILL_SE_CONF_NO_IDOC        =
+*  CHANGING
+*    MILL_SE_FATTR               =
+  exceptions
+    instance_not_found          = 1
+    internal_error              = 2
+    no_class_allocation         = 3
+    instance_not_valid          = 4
+    others                      = 5
+            .
+  if sy-subrc <> 0.
+    message id sy-msgid type sy-msgty number sy-msgno
+            with sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  endif.
+
+  clear: profil,  length, color.
+  loop at i_config.
+    case i_config-atnam.
+      when 'PROFIL_NUMBER'.
+        profil = i_config-atwrt.
+      when 'COLOUR'.
+        color = i_config-atwrt.
+      when 'LENGTH'.
+        length = i_config-atwrt.
+      when 'STANDARD_LENGTH'.
+        st_length = i_config-atwtb.
+      when 'ETALBOND_CUST_COL_UP'.
+        color_up = i_config-atwrt.
+      when 'ETALBOND_CUST_COL_DOWN'.
+        color_down = i_config-atwrt.
+
+    endcase.
+  endloop.
+
+endform.                    " get_characteristics
+
+
+
+*---------------------------------------------------------------------*
+*       FORM convert_to_value                                         *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+*  -->  IN_CHAR                                                       *
+*  -->  OUT_CHAR                                                      *
+*---------------------------------------------------------------------*
+form convert_to_value using in_char changing out_char.
+
+endform.                    "CONVERT_TO_VALUE
+
+*---------------------------------------------------------------------*
+*       FORM get_week_no                                              *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+*  -->  EDATU                                                         *
+*  -->  WEEK_NO                                                       *
+*---------------------------------------------------------------------*
+
+
+*---------------------------------------------------------------------*
+*       FORM get_delivered                                            *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+
+* ALV definitions
+*----------------------------------------------------------------------*
+type-pools : slis.
+data       : fieldcat            type slis_t_fieldcat_alv.
+data       : ls_layout type slis_layout_alv occurs 1 with header line.
+data       : ls_variant          like disvariant.
+data       : ls_sort             type slis_t_sortinfo_alv.
+data       : ls_event            type slis_t_event with header line.
+data       : gt_list_top_of_page type slis_t_listheader.
+data       : xevent              type slis_alv_event.
+*----------------------------------------------------------------------*
+data: begin of struc occurs 0.
+        include structure lvc_s_glay.
+data: end of struc.
+
+*---------------------------------------------------------------------*
+*       FORM write_list                                               *
+*---------------------------------------------------------------------*
+*       ALV OUTPUT                                                    *
+*---------------------------------------------------------------------*
+form write_list.
+  perform fieldcat_init using fieldcat[].
+
+
+
+
+  clear ls_variant.
+  ls_variant-report = sy-repid.
+  perform build_sort using ls_sort.
+  ls_layout-info_fieldname  = 'LINE_COLOR'.
+*  ls_layout-lights_fieldname = 'LIGHT' .
+  ls_layout-totals_text = text-s01.
+  ls_layout-subtotals_text = text-s02.
+  ls_layout-colwidth_optimize = 'X'.
+  ls_layout-edit_mode = 'X'.
+  ls_layout-zebra = ' '.
+
+
+*
+
+*  loop at i_data.
+*    i_data-line_color    = 'C600'.
+*    modify i_data index sy-tabix.
+*  endloop.
+*
+  perform alv.
+
+
+endform.                    "WRITE_LIST
+*---------------------------------------------------------------------*
+*       FORM find_comments                                            *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+*  -->  VALUE(ID)                                                     *
+*  -->  VALUE(NAME)                                                   *
+*  -->  COMMENTS                                                      *
+*---------------------------------------------------------------------*
+form find_comments
+       using
+
+             value(id)        like  thead-tdid
+             value(name)      like  thead-tdname
+
+       changing comments
+       .
+
+  data : my_lines like tline
+         occurs 0 with header line .
+
+  clear comments .
+  call function 'READ_TEXT'
+    exporting
+*   CLIENT                        = SY-MANDT
+      id                            = 'Z001'
+      language                      = sy-langu
+      name                          =  name
+      object                        = 'VBBK'
+*   ARCHIVE_HANDLE                = 0
+*   LOCAL_CAT                     = ' '
+* IMPORTING
+*   HEADER                        =
+    tables
+      lines                         = my_lines
+ exceptions
+*   ID                            = 1
+*   LANGUAGE                      = 2
+*   NAME                          = 3
+   not_found                     = 4
+*   OBJECT                        = 5
+*   REFERENCE_CHECK               = 6
+*   WRONG_ACCESS_TO_ARCHIVE       = 7
+*   OTHERS                        = 8
+            .
+*IF SY-SUBRC <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+*ENDIF.
+  if sy-subrc = 0.
+    read table my_lines index 1.
+    comments = my_lines-tdline.
+  elseif sy-subrc = 4 .
+
+  endif.
+endform.                    " find_comments
+
+*---------------------------------------------------------------------*
+*       FORM fieldcat_init                                            *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+*  -->  RT_FIELDCAT                                                   *
+*---------------------------------------------------------------------*
+form fieldcat_init
+      using rt_fieldcat type slis_t_fieldcat_alv.
+
+  data: ls_fieldcat type slis_fieldcat_alv.
+  constants:  cut_zeros value 'X'.
+*  DATA: pos TYPE i .
+*  pos = pos + 1.
+
+*---------------------------------------
+
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  1.
+  ls_fieldcat-seltext_m      = text-043.
+  ls_fieldcat-fieldname     = 'CHECK'.
+  ls_fieldcat-checkbox = 'X'.
+  ls_fieldcat-edit = 'X'.
+  ls_fieldcat-fix_column = 'X'.
+  append ls_fieldcat to rt_fieldcat.
+
+
+
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  1.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'VBELN'.
+  ls_fieldcat-ref_fieldname    = 'VBELN'.
+  ls_fieldcat-ref_tabname      = 'VBAK'.
+
+*  ls_fieldcat-ref_tabname = 'VBRK'.
+
+*  ls_fieldcat-no_out = 'X'.
+  ls_fieldcat-seltext_m      = text-010.
+  ls_fieldcat-fix_column = 'X'.
+*  ls_fieldcat-no_out      = 'X'.
+  append ls_fieldcat to rt_fieldcat.
+*---------------------------------------
+
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  1.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'POSNR'.
+  ls_fieldcat-seltext_m      = text-017.
+  ls_fieldcat-fix_column = 'X'.
+  append ls_fieldcat to rt_fieldcat.
+*---------------------------------------
+
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  1.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'MATNR'.
+  ls_fieldcat-outputlen     = 12.
+  ls_fieldcat-seltext_m      = text-036.
+  ls_fieldcat-ref_fieldname      = 'MATNR'.
+  ls_fieldcat-ref_tabname      = 'MARA'.
+
+  append ls_fieldcat to rt_fieldcat.
+*---------------------------------------
+* DP + --> 22/10/2008
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'TMENGE'.
+  ls_fieldcat-outputlen     = 20.
+  ls_fieldcat-no_zero = 'X'.
+  ls_fieldcat-ddictxt = 'M'.
+  ls_fieldcat-seltext_m      = text-046.
+
+  ls_fieldcat-ref_fieldname = 'BMENG'.
+  ls_fieldcat-ref_tabname = 'VBEP'.
+  ls_fieldcat-qfieldname   = 'VRKME'.
+  if weight_dif = 'X'.
+    ls_fieldcat-emphasize = 'C310'.
+  endif.
+
+  append ls_fieldcat to rt_fieldcat.
+
+
+  if weight_dif = 'X'.
+    clear ls_fieldcat.
+    ls_fieldcat-fieldname     = 'W_DIFF'.
+    ls_fieldcat-seltext_m     = text-047.
+    ls_fieldcat-emphasize     = 'C310'.
+
+    append ls_fieldcat to rt_fieldcat.
+
+  endif.
+* DP + <-- 22/10/2008
+*---------------------------------------
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'SOLD_TO'.
+  ls_fieldcat-seltext_m      = text-037.
+
+  append ls_fieldcat to rt_fieldcat.
+**----------------------------------------
+
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'SHIP_TO'.
+  ls_fieldcat-seltext_m      = text-038.
+
+  append ls_fieldcat to rt_fieldcat.
+**----------------------------------------
+
+**
+*  CLEAR ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+**  ls_fieldcat-col_pos       =  pos + 1.
+*  ls_fieldcat-fieldname     = 'MATKL'.
+*  ls_fieldcat-seltext_m      = text-005.
+** ls_fieldcat-outputlen   = 6.
+**  ls_fieldcat-do_sum     = 'X'.
+*
+*  APPEND ls_fieldcat TO rt_fieldcat.
+**----------------------------------------
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'PROFIL'.
+  ls_fieldcat-seltext_m      = text-008.
+
+  append ls_fieldcat to rt_fieldcat.
+**----------------------------------------
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'LENGTH'.
+  ls_fieldcat-seltext_m      = text-012.
+
+  append ls_fieldcat to rt_fieldcat.
+**----------------------------------------
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'ST_LENGTH'.
+  ls_fieldcat-seltext_m      = text-026.
+
+  append ls_fieldcat to rt_fieldcat.
+
+**----------------------------------------
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'COLOR'.
+  ls_fieldcat-seltext_m      = text-013.
+*  ls_fieldcat-do_sum      = 'X'.
+*  ls_fieldcat-no_zero     = cut_zeros.
+
+
+  append ls_fieldcat to rt_fieldcat.
+**----------------------------------------
+*
+  clear ls_fieldcat.
+  ls_fieldcat-fieldname     = 'WMENG'.
+  ls_fieldcat-qfieldname   = 'VRKME'.
+*  ls_fieldcat-QUANTITY    = .
+  ls_fieldcat-seltext_m      = text-030.
+*   ls_fieldcat-inttype      = 'N'.
+  ls_fieldcat-decimals_out  = 0.
+
+
+  append ls_fieldcat to rt_fieldcat.
+**----------------------------------------
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'BMENG'.
+  ls_fieldcat-qfieldname   = 'VRKME'.
+*  ls_fieldcat-edit_mask   = 'RR'.
+  ls_fieldcat-seltext_m      = text-031.
+  ls_fieldcat-decimals_out  = 3.
+*  ls_fieldcat-no_zero     = cut_zeros.
+
+  append ls_fieldcat to rt_fieldcat.
+**----------------------------------------
+*
+
+
+
+
+
+*I_DATA-dif_deliv_q
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'DIF_DELIV_Q'.
+  ls_fieldcat-qfieldname   = 'VRKME'.
+  ls_fieldcat-decimals_out  = 3.
+*  ls_fieldcat-edit_mask   = '__.___'.
+  ls_fieldcat-seltext_m      = text-033.
+  ls_fieldcat-decimals_out  = 0.
+
+
+  append ls_fieldcat to rt_fieldcat.
+
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'MAKE_TO_ORDER'..
+  ls_fieldcat-qfieldname   = 'VRKME'.
+*  ls_fieldcat-edit_mask   = 'RR'.
+  ls_fieldcat-seltext_m      = text-034.
+  ls_fieldcat-decimals_out  = 3.
+*  ls_fieldcat-do_sum      = 'X'.
+*  ls_fieldcat-no_zero     = cut_zeros.
+
+  append ls_fieldcat to rt_fieldcat.
+
+*MAKE TO STOCK
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'MAKE_TO_STOCK'..
+*  ls_fieldcat-edit_mask   = 'RR'.
+  ls_fieldcat-qfieldname   = 'VRKME'.
+  ls_fieldcat-seltext_m      = text-035.
+  ls_fieldcat-round = '0'.
+*  ls_fieldcat-do_sum      = 'X'.
+*  ls_fieldcat-no_zero     = cut_zeros.
+  ls_fieldcat-decimals_out  = 0.
+  append ls_fieldcat to rt_fieldcat.
+
+*MAKE TO STOCK
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'ZMENGE'.
+*  ls_fieldcat-edit_mask   = 'RR'.
+  ls_fieldcat-qfieldname   = 'VRKME'.
+  ls_fieldcat-seltext_m      = text-039.
+  ls_fieldcat-round = '0'.
+*  ls_fieldcat-do_sum      = 'X'.
+*  ls_fieldcat-no_zero     = cut_zeros.
+  ls_fieldcat-decimals_out  = 0.
+  append ls_fieldcat to rt_fieldcat.
+
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'VRKME'.
+*  ls_fieldcat-edit_mask   = '__.___'.
+  ls_fieldcat-seltext_m      = text-032.
+
+
+  append ls_fieldcat to rt_fieldcat.
+*----------------------------------------
+*ABRVW
+
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'ABRVW'.
+*  ls_fieldcat-edit_mask   = '__.___'.
+  ls_fieldcat-seltext_m      = text-042.
+
+
+  append ls_fieldcat to rt_fieldcat.
+
+
+*
+*  CLEAR ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+**  ls_fieldcat-col_pos       =  pos + 1.
+*  ls_fieldcat-fieldname     = 'MBDAT'.
+*  ls_fieldcat-seltext_m      = text-025.
+**  ls_fieldcat-no_out      = 'X'.
+*  ls_fieldcat-tech     = 'X'.
+*
+*  APPEND ls_fieldcat TO rt_fieldcat.
+
+
+
+*  CLEAR ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+**  ls_fieldcat-col_pos       =  pos + 1.
+*  ls_fieldcat-fieldname     = 'MBDAT'.
+*  ls_fieldcat-seltext_m      = text-025.
+**  ls_fieldcat-no_out      = 'X'.
+*  ls_fieldcat-tech     = 'X'.
+*
+*  APPEND ls_fieldcat TO rt_fieldcat.
+*
+
+* XREF1_H
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'TEXT'.
+  ls_fieldcat-outputlen     = 20.
+  ls_fieldcat-seltext_m      = text-045.
+*  ls_fieldcat-no_out      = 'X'..
+
+  append ls_fieldcat to rt_fieldcat.
+
+
+
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'XREF1_HD'.
+  ls_fieldcat-no_zero = 'X'.
+*  ls_fieldcat-decimals     = 3.
+  ls_fieldcat-ddictxt = 'M'.
+  ls_fieldcat-seltext_m      = text-040.
+
+  ls_fieldcat-ref_fieldname = 'BMENG'.
+  ls_fieldcat-ref_tabname = 'VBEP'.
+  ls_fieldcat-qfieldname   = 'VRKME'.
+
+*  ls_fieldcat-no_out      = 'X'.
+  ls_fieldcat-edit = 'X'.
+
+  append ls_fieldcat to rt_fieldcat.
+
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'XREF2_HD'.
+  ls_fieldcat-outputlen     = 20.
+  ls_fieldcat-no_zero = 'X'.
+  ls_fieldcat-ddictxt = 'M'.
+  ls_fieldcat-seltext_m      = text-041.
+
+  ls_fieldcat-ref_fieldname = 'BMENG'.
+  ls_fieldcat-ref_tabname = 'VBEP'.
+  ls_fieldcat-qfieldname   = 'VRKME'.
+
+
+  ls_fieldcat-edit = 'X'.
+
+  if weight_dif = 'X'.
+    ls_fieldcat-emphasize = 'C310'.
+  endif.
+
+  append ls_fieldcat to rt_fieldcat.
+
+*
+* CLEAR ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+**  ls_fieldcat-col_pos       =  pos + 1.
+*  ls_fieldcat-fieldname     = 'XREF2_HD'.
+*  ls_fieldcat-seltext_m      = text-040.
+**  ls_fieldcat-no_out      = 'X'.
+*  ls_fieldcat-tech     = 'X'.
+*
+*  APPEND ls_fieldcat TO rt_fieldcat.
+*
+  clear ls_fieldcat.
+*  ls_fieldcat-row_pos       =  pos.
+*  ls_fieldcat-col_pos       =  pos + 1.
+  ls_fieldcat-fieldname     = 'FLAG'.
+*  ls_fieldcat-edit_mask   = '__.___'.
+  ls_fieldcat-seltext_m      = text-027.
+  if ls_fieldcat-input = 'X'.
+    ls_fieldcat-emphasize = 'X'.
+  endif.
+
+  append ls_fieldcat to rt_fieldcat.
+
+
+
+endform.                    " fieldcat_init
+
+*---------------------------------------------------------------------*
+*       FORM build_sort                                               *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+*  -->  P_LS_SORT                                                     *
+*---------------------------------------------------------------------*
+form build_sort using    p_ls_sort type slis_t_sortinfo_alv.
+  data: ps_sort type slis_sortinfo_alv.
+
+*  CLEAR ps_sort.
+*  ps_sort-fieldname = 'WEEKNO_2'.
+**  ps_sort-tabname   = ''.
+*  ps_sort-spos      = 1.
+*  ps_sort-up        = 'X'.
+*  ps_sort-subtot    = 'X'.
+*  ps_sort-group     = '01'.
+
+*  APPEND ps_sort TO p_ls_sort.
+
+*  CLEAR ps_sort.
+*  ps_sort-fieldname = 'VBELN'.
+**  ps_sort-tabname   = ''.
+*  ps_sort-spos      = 2.
+*  ps_sort-up        = 'X'.
+** ps_sort-subtot    = 'X'.
+*  ps_sort-group     = '01'.
+*  APPEND ps_sort TO p_ls_sort.
+**
+*  CLEAR ps_sort.
+*  ps_sort-fieldname = 'POSNR'.
+**  ps_sort-tabname   = 'VBAP'.
+*  ps_sort-spos      = 3.
+*  ps_sort-up        = 'X'.
+**  ps_sort-subtot    = 'X'.
+*  ps_sort-group     = '01'.
+*  APPEND ps_sort TO p_ls_sort.
+* =======> ENHANCEMENTS 2-3-2007
+*  CLEAR PS_SORT.
+*  PS_SORT-FIELDNAME = 'COLOR'.
+** PS_SORT-TABNAME   = ''.
+*  PS_SORT-SPOS      = 1.
+*  PS_SORT-UP        = 'X'.
+*  PS_SORT-SUBTOT    = 'X'.
+*  PS_SORT-GROUP     = '01'.
+*
+*  APPEND PS_SORT TO P_LS_SORT.
+*
+*  CLEAR PS_SORT.
+*  PS_SORT-FIELDNAME = 'PROFIL'.
+** PS_SORT-TABNAME   = ''.
+*  PS_SORT-SPOS      = 2.
+*  PS_SORT-UP        = 'X'.
+*  PS_SORT-SUBTOT    = 'X'.
+*  PS_SORT-GROUP     = '01'.
+*
+*  APPEND PS_SORT TO P_LS_SORT.
+*
+*  CLEAR PS_SORT.
+*  PS_SORT-FIELDNAME = 'VBELN'.
+** PS_SORT-TABNAME   = ''.
+*  PS_SORT-SPOS      = 3.
+*  PS_SORT-UP        = 'X'.
+*  PS_SORT-SUBTOT    = 'X'.
+*  PS_SORT-GROUP     = '01'.
+*
+*  APPEND PS_SORT TO P_LS_SORT.
+
+* =======> END OF ENHANCEMENTS 2-3-2007
+
+endform.                    " build_sort
+*&---------------------------------------------------------------------*
+*&      Form  selection_ranges
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+*FORM selection_ranges.
+*  CLEAR: r_thick.
+*
+*  IF p_thickt IS INITIAL.
+*    r_thick-sign = 'I'.
+*    r_thick-option = 'EQ'.
+*  ELSE.
+*    r_thick-sign = 'I'.
+*    r_thick-option = 'BT'.
+*
+*  ENDIF .
+*  r_thick-low = p_thickf.
+*  r_thick-high = p_thickt.
+*
+*ENDFORM.                    " selection_ranges
+*&---------------------------------------------------------------------*
+*&      Form  check_number
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form check_number using field.
+*  IF field CN '0123456789,. '.
+*    MESSAGE e005 WITH 'Numeric expected'(n01).
+*  ENDIF.
+endform.                    " check_number
+*&---------------------------------------------------------------------*
+*&      Form  convert_numbers
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_I_DATA_THICKNESS  text
+*      <--P_VALUE1  text
+*      <--P_VALUE2  text
+*----------------------------------------------------------------------*
+form convert_numbers using    p_data
+                              p_sel1
+                              p_sel2
+                     changing p_dbvalue
+                              p_value1
+                              p_value2.
+*  DATA: val1(10), val2(10).
+*  CLEAR: val1, val2.
+*  SPLIT p_data AT space INTO val1 val2 .
+*  REPLACE '.' WITH ' ' INTO val1.
+*  CONDENSE val1 NO-GAPS.
+*  REPLACE ',' WITH '.' INTO val1.
+*  p_dbvalue = val1.
+*
+*  REPLACE '.' WITH ' ' INTO p_sel1.
+*  CONDENSE p_sel1 NO-GAPS.
+*  REPLACE '.' WITH ' ' INTO p_sel2.
+*  CONDENSE p_sel2 NO-GAPS.
+*  REPLACE ',' WITH '.' INTO p_sel1.
+*  REPLACE ',' WITH '.' INTO p_sel2.
+*  p_value1 = p_sel1.
+*  p_value2 = p_sel2.
+*  IF p_value1 IS INITIAL.
+*    p_value2 = '9999999999'.
+*  ELSE.
+*    IF p_value2 IS INITIAL.
+*      p_value2 = p_value1.
+*    ENDIF.
+*  ENDIF.
+
+  data: val1(10), val2(10).
+  clear: val1, val2.
+*  SPLIT p_data AT space INTO val1 val2 .
+*  REPLACE '.' WITH ' ' INTO val1.
+*  CONDENSE val1 NO-GAPS.
+*  REPLACE ',' WITH '.' INTO val1.
+*  p_dbvalue = val1.
+  p_dbvalue = p_data.
+
+
+*  REPLACE '.' WITH ' ' INTO p_sel1.
+*  CONDENSE p_sel1 NO-GAPS.
+*  REPLACE '.' WITH ' ' INTO p_sel2.
+*  CONDENSE p_sel2 NO-GAPS.
+*  REPLACE ',' WITH '.' INTO p_sel1.
+*  REPLACE ',' WITH '.' INTO p_sel2.
+  p_value1 = p_sel1.
+  p_value2 = p_sel2.
+  if p_value1 is initial.
+    p_value2 = '9999999999'.
+  else.
+    if p_value2 is initial.
+      p_value2 = p_value1.
+    endif.
+  endif.
+
+
+endform.                    " convert_numbers
+*&---------------------------------------------------------------------*
+*&      Form  find_make_to
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form find_make_to using i_data-make_to_order.
+
+
+  tables: t459a, t459k, mska, t163k,mard, mara.
+
+  clear t459a.
+  select single * from t459a where bedae  = vbap-bedae.
+  check sy-subrc = 0.
+
+  clear t459k.
+  select single * from t459k where bedar = t459a-bedar.
+
+  check sy-subrc = 0.
+
+  clear t163k.
+  select single * from t163k where knttp = t459k-knttp.
+  if  sy-subrc = 0 and t163k-sobkz = 'E'.
+
+
+    clear mska.
+    select single  * from mska where vbeln = vbap-vbeln
+                               and   posnr = vbap-posnr.
+
+
+    i_data-make_to_order = mska-kalab.
+
+    i_data-flag = 'X'.
+
+    perform convert_units using vbap-matnr
+                                vbap-meins
+                                vbap-vrkme
+                               i_data-make_to_order.
+  else.
+
+    clear mard.
+    select   *    from mard
+                        where matnr = vbap-matnr
+                        and   werks = vbap-werks.
+
+      i_data-make_to_stock = mard-labst + i_data-make_to_stock.
+    endselect.
+
+    if sy-subrc = 0.
+
+
+
+
+      perform convert_units using vbap-matnr
+                                  vbap-meins
+                                  vbap-vrkme
+                                 i_data-make_to_stock.
+
+
+    endif.
+
+
+
+  endif.
+
+
+
+
+
+
+endform.                    " find_make_to
+*&---------------------------------------------------------------------*
+*&      Form  CONVERT_UNITS
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form convert_units using matnr
+                         meins
+                         vrkme
+                         amount.
+
+
+  call function 'MD_CONVERT_MATERIAL_UNIT'
+    exporting
+      i_matnr              = matnr
+      i_in_me              = meins
+      i_out_me             = vrkme
+      i_menge              = amount
+    importing
+      e_menge              = amount
+    exceptions
+      error_in_application = 1
+      error                = 2
+      others               = 3.
+  if sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+  endif.
+
+
+endform.                    " CONVERT_UNITS
+*&---------------------------------------------------------------------*
+*&      Form  get_documents
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form get_documents.
+
+* Select Logic from transaction zpick
+
+  select * from vbak
+           where vkorg = p_vkorg
+             and vbeln in s_vbeln
+             and kunnr in s_kunnr
+             and abrvw in s_abrvw.
+
+    select single * from vbpa
+                    where vbeln = vbak-vbeln
+                      and parvw = 'WE'
+                      and kunnr in sh_kunr.
+    if sy-subrc ne 0.
+      continue.
+    endif.
+    i_doc-vbeln = vbak-vbeln.
+    append i_doc.
+  endselect.
+
+
+endform.                    " get_documents
+*&---------------------------------------------------------------------*
+*&      Form  postab_values_supp
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form collect_vbep.
+
+  data: p_xvbap like vbapvb occurs 0 with header line,
+        p_xvbup like vbupvb occurs 0 with header line,
+        p_xvbep like  vbepvb occurs 0 with header line,
+        da_bdart_ini like vbep-bdart,
+        da_plart_ini like vbep-plart.
+
+  data  p_xvbfa like  vbfavb occurs 0 with header line.
+
+  p_xvbap = vbap.
+  append p_xvbap.
+  p_xvbup = vbup.
+  append p_xvbup.
+
+
+  select * from vbfa where vbelv = vbap-vbeln
+                     and   posnv = vbap-posnr.
+
+    move-corresponding vbfa to p_xvbfa.
+    append p_xvbfa.
+  endselect.
+
+
+
+  select  * from vbep where vbeln = vbap-vbeln
+                              and posnr = vbap-posnr
+                              and edatu in s_edatu.
+
+    move-corresponding vbep to p_xvbep.
+    append p_xvbep.
+
+
+  endselect.
+
+
+
+  call function 'RV_SCHEDULE_CHECK_DELIVERIES'
+       exporting
+            fbeleg                  = vbap-vbeln
+            fposnr                  = vbap-posnr
+            fs073_alt               = 'X'
+       tables
+            fvbfa                   = p_xvbfa
+            fvbup                   = p_xvbup
+            fxvbep                  = p_xvbep
+            fvbap                   = p_xvbap
+       exceptions
+            fehler_bei_lesen_fvbup  = 1
+            fehler_bei_lesen_fxvbep = 2
+            others.
+
+
+  loop at p_xvbep.
+    add p_xvbep-wmeng to i_data-wmeng.
+    add p_xvbep-bmeng to i_data-bmeng.
+*    ADD p_xvbep-vsmng TO i_data-dif_deliv_q .
+
+*  VSMNG
+  endloop.
+
+
+  clear lips.
+  select  * from lips where vgbel = vbap-vbeln
+                            and   vgpos = vbap-posnr.
+    "@dt20170308 case for M2 <<<
+    if lips-vrkme = 'M2' and p_xvbep-vrkme = 'M2'.
+      add lips-lfimg   to i_data-dif_deliv_q .
+    else.
+    "@dt20170308 case for M2 >>>
+      if lips-vrkme = 'ST' and lips-vrkme = lips-voleh.
+        add lips-lfimg   to i_data-dif_deliv_q .
+      else.
+        add lips-volum   to i_data-dif_deliv_q .
+      endif.
+    endif.
+  endselect.
+
+
+endform.                    " postab_values_supp
+
+
+*---------------------------------------------------------------------*
+*       FORM USER_COMMAND                                             *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+*  -->  P_UCOMM                                                       *
+*  -->  P_SELFIELD                                                    *
+*---------------------------------------------------------------------*
+form user_command using p_ucomm like sy-ucomm
+                        p_selfield type slis_selfield.
+
+  data continue.
+
+  case p_ucomm .
+    when '&IC1'.
+      if p_selfield-sel_tab_field = '1-VBELN'.
+        read table i_data index   p_selfield-tabindex.
+        set parameter id 'AUN' field i_data-vbeln.
+        call transaction 'VA02' and skip first screen.
+      endif.
+
+    when  '&DATA_SAVE'.
+      call function 'C14A_POPUP_SAVE'
+        importing
+          e_continue = continue.
+
+      if continue = 'X'.
+        perform vl10a_vlo2n_batch.
+      endif.
+
+    when  'CUT'.
+      delete i_data index   p_selfield-tabindex.
+
+  endcase.
+
+endform.                    "USER_COMMAND
+*&---------------------------------------------------------------------*
+*&      Form  get_text
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form get_text using text.
+
+  data:  inlines like tline occurs 0 with header line,
+         lines like tline occurs  0 with header line,
+         document like thead-tdname.
+
+  document  = vbak-vbeln.
+
+  call function 'READ_TEXT_INLINE'
+    exporting
+      id                    = 'Z001'
+      inline_count          = 1
+      language              = sy-langu
+      name                  = document
+      object                = 'VBBK'
+*   LOCAL_CAT             = ' '
+* IMPORTING
+*   HEADER                =
+    tables
+      inlines               = inlines
+      lines                 = lines
+   exceptions
+     id                    = 1
+     language              = 2
+     name                  = 3
+     not_found             = 4
+     object                = 5
+     reference_check       = 6
+     others                = 7
+            .
+  if sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+  endif.
+
+  read table inlines index 1.
+  text = inlines-tdline.
+
+
+endform.                    " get_text
+
+*---------------------------------------------------------------------*
+*       FORM FULLSCREEN                                               *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+*  -->  RT_EXTAB                                                      *
+*---------------------------------------------------------------------*
+form fullscreen using rt_extab type slis_t_extab.
+
+  data extab  type kkblo_t_extab with header line..
+*&DATA_SAVE
+  loop at rt_extab into extab.
+
+    if extab-fcode = '&DATA_SAVE'
+    or  extab-fcode = '&REFRESH'.
+
+      delete rt_extab index sy-tabix.
+    endif.
+
+  endloop.
+
+
+  set pf-status 'FULLSCREEN' excluding rt_extab.
+
+
+
+
+endform.                    "FULLSCREEN
+*&---------------------------------------------------------------------*
+*&      Form  read_ZETEM_PICKQ
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form vl10a_vlo2n_batch.
+  data: begin of i_vbeln occurs 0,
+  vbeln like vbak-vbeln,
+  end of i_vbeln.
+
+  data: counter(2).
+  data: fname1(19).
+  data: messtab type table of bdcmsgcoll with header line.
+  data: lines type i,
+        my_tabix type i.
+  data: w_date like sy-datum,
+        date(8).
+  tables vbss.
+
+
+  loop at i_data.
+
+    if not i_data-xref1_hd is initial
+    or  not  i_data-xref2_hd  is initial.
+
+      i_vbeln-vbeln = i_data-vbeln.
+      collect i_vbeln.
+    else.
+      i_data-light    = '1'.
+      modify i_data index sy-tabix.
+    endif.
+
+  endloop.
+
+  check not i_vbeln[] is initial.
+
+
+*  W_DATE = SY-DATUM. " -DP 22/10/2008
+  w_date = myvdatu.   " +DP 22/10/2008
+  concatenate w_date+6(2) w_date+4(2) w_date(4) into date.
+  clear: bdc, bdc[].
+* ========> + 16.03.2007 <=======
+  perform bdc_dynpro tables bdc using 'RVV50R10C' '1000'.
+  perform bdc_field tables bdc using 'BDC_CURSOR' 'ST_LEDAT-HIGH'.
+  perform bdc_field tables bdc using 'BDC_OKCODE' '=S0S_TAB2'.
+  perform bdc_field tables bdc using 'ST_LEDAT-LOW'  ' '.
+  perform bdc_field tables bdc using 'ST_LEDAT-HIGH' date.
+  perform bdc_field tables bdc using 'P_LERUL'    ''.
+
+  perform bdc_dynpro tables bdc using 'RVV50R10C' '1000'.
+  perform bdc_field tables bdc using 'BDC_CURSOR' 'ST_LEDAT-HIGH'.
+  perform bdc_field tables bdc using 'BDC_OKCODE' '=%00210200000713501'.
+  perform bdc_field tables bdc using 'ST_LEDAT-HIGH' date .
+  perform bdc_field tables bdc using 'ST_LIFSP-LOW'  '08'.
+  perform bdc_field tables bdc using 'ST_LIFSP-HIGH'  '09'.
+* ========>end of  + 16.03.2007 <=======
+
+* ========> - 16.03.2007 <=======
+*  PERFORM BDC_DYNPRO TABLES BDC USING 'RVV50R10C' '1000'.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'BDC_CURSOR' 'ST_VSTEL-LOW'.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'BDC_OKCODE' '=S0S_TAB2'.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'ST_LEDAT-LOW' ''.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'ST_LEDAT-HIGH' DATE .
+*  PERFORM BDC_FIELD  TABLES BDC USING 'P_LERUL' '2'.
+*
+*  PERFORM BDC_DYNPRO TABLES BDC USING 'RVV50R10C' '1000'.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'BDC_OKCODE'
+*                                '=%00210200000153084'.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'ST_LEDAT-LOW' ''.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'ST_LEDAT-HIGH' DATE .
+*  PERFORM BDC_FIELD  TABLES BDC USING 'P_LERUL' '2'.
+**  PERFORM bdc_field  TABLES bdc USING 'BDC_CURSOR' 'ST_VBELN-LOW'.
+**  PERFORM bdc_field  TABLES bdc USING 'ST_VBELN-LOW' i_data-vbeln.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'ST_LIFSP-LOW' '08'.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'ST_LIFSP-HIGH'  '09'.
+* ========>end of  - 16.03.2007 <=======
+
+
+*<
+  loop at i_vbeln.
+    perform bdc_dynpro tables bdc     using 'SAPLALDB' '3000'.
+    perform bdc_field  tables bdc     using 'BDC_OKCODE'
+                                  '=LINS'.
+    perform bdc_field  tables bdc     using 'BDC_CURSOR'
+                                  'RSCSEL-SLOW_I(01)'.
+    perform bdc_field  tables bdc     using 'RSCSEL-SLOW_I(01)'
+                                  i_vbeln-vbeln.
+
+
+
+  endloop.
+*>
+
+* PERFORM bdc_dynpro TABLES bdc USING 'SAPLALDB' '3000'.
+*  PERFORM bdc_field  TABLES bdc USING 'BDC_OKCODE' '=P+'.
+*  PERFORM bdc_field  TABLES bdc USING 'BDC_CURSOR' 'RSCSEL-SLOW_I(04)'.
+*
+*  counter = 1.
+*  UNPACK counter TO counter.
+*  LOOP AT i_data .
+*
+*    my_tabix = sy-tabix MOD 9 .
+*
+*    CONCATENATE 'RSCSEL-SLOW_I(' counter ')' INTO fname1.
+**    CONCATENATE 'RSCSEL-SLOW_I(' COUNTER ')' INTO FNAME2.
+**    CONCATENATE 'RSCSEL-SLOW_I(' COUNTER ')' INTO FNAME3.
+**    CONCATENATE 'RSCSEL-SLOW_I(' COUNTER ')' INTO FNAME4.
+**    CONCATENATE 'RSCSEL-SLOW_I(' COUNTER ')' INTO FNAME5.
+*    PERFORM bdc_field  TABLES bdc USING fname1 i_data-vbeln .
+**  PERFORM bdc_field  TABLES bdc USING 'RSCSEL-SLOW_I(02)' '115'.
+**  PERFORM bdc_field  TABLES bdc USING 'RSCSEL-SLOW_I(03)' '116'.
+**  PERFORM bdc_field  TABLES bdc USING 'RSCSEL-SLOW_I(04)' '124'.
+**  PERFORM bdc_field  TABLES bdc USING 'RSCSEL-SLOW_I(05)' ''.
+**  PERFORM bdc_field  TABLES bdc USING 'RSCSEL-SLOW_I(06)' ''.
+**  PERFORM bdc_field  TABLES bdc USING 'RSCSEL-SLOW_I(07)' ''.
+**  PERFORM bdc_field  TABLES bdc USING 'RSCSEL-SLOW_I(08)' ''.
+**  PERFORM bdc_field  TABLES bdc USING 'RSCSEL-SLOW_I(09)' ''.
+*    counter = counter + 1.
+*    IF my_tabix = 0 .
+*      PERFORM bdc_field  TABLES bdc USING 'RSCSEL-SLOW_I(09)'
+*                                          '__________'.
+*      PERFORM bdc_dynpro TABLES bdc USING 'SAPLALDB' '3000'.
+*      PERFORM bdc_field  TABLES bdc USING 'BDC_OKCODE' '=P+'.
+*      PERFORM bdc_field  TABLES bdc USING 'BDC_CURSOR'
+*                                          'RSCSEL-SLOW_I(04)'.
+*      counter = 2.
+*      UNPACK counter TO counter.
+*    ENDIF.
+*  ENDLOOP.
+
+* ========> + 16.03.2007 <=======
+  perform bdc_dynpro tables bdc using 'SAPLALDB' '3000'.
+  perform bdc_field  tables bdc using 'BDC_OKCODE' '=ACPT'.
+
+  perform bdc_dynpro tables bdc  using 'RVV50R10C' '1000'.
+  perform bdc_field tables bdc  using 'BDC_CURSOR' 'ST_LEDAT-HIGH'.
+  perform bdc_field tables bdc  using 'BDC_OKCODE' '=ONLI'.
+
+**@@@+DT 20130411
+**   perform bdc_field tables bdc  using 'P_LERUL' '2'.
+**   perform bdc_field tables bdc  using 'BDC_SUBSCR'
+**         'RVV50R10C                               1010%_SUBSCREEN_ORDER_CRITERIA'.
+
+  perform bdc_field tables bdc  using 'ST_LEDAT-HIGH'  date.
+  perform bdc_field tables bdc  using 'ST_VBELN-LOW'  i_data-vbeln.
+  perform bdc_field tables bdc  using 'ST_LIFSP-LOW'  '08'.
+  perform bdc_field tables bdc  using 'ST_LIFSP-HIGH' '09'.
+
+*  PERFORM bdc_dynpro TABLES bdc USING 'SAPLSLVC_FULLSCREEN' '0500'.
+*  PERFORM bdc_field  TABLES bdc USING 'BDC_OKCODE' '=&ALL'.
+**@@@@ comment by dt
+  perform bdc_dynpro tables bdc using 'SAPMSSY0' '0120'.
+  perform bdc_field tables bdc  using 'BDC_CURSOR' '04/03'.
+  perform bdc_field  tables bdc using 'BDC_OKCODE' '=&ALL'.
+
+
+*  PERFORM bdc_dynpro TABLES bdc  USING 'SAPLSLVC_FULLSCREEN' '0500'.
+*  PERFORM bdc_field TABLES bdc  USING 'BDC_OKCODE'  '=SAMD'.
+
+  perform bdc_dynpro tables bdc using 'SAPMSSY0' '0120'.
+  perform bdc_field tables bdc  using 'BDC_CURSOR' '04/03'.
+  perform bdc_field tables bdc  using 'BDC_OKCODE'  '=SAMD'.
+
+*  PERFORM bdc_dynpro TABLES bdc  USING 'SAPLSLVC_FULLSCREEN' '0500'.
+*  PERFORM bdc_field TABLES bdc  USING 'BDC_OKCODE' '=&F03'.
+
+  perform bdc_dynpro tables bdc using 'SAPMSSY0' '0120'.
+  perform bdc_field tables bdc  using 'BDC_CURSOR' '04/03'.
+  perform bdc_field tables bdc  using 'BDC_OKCODE' '=&F03'.
+
+  perform bdc_dynpro tables bdc  using 'RVV50R10C' '1000'.
+  perform bdc_field tables bdc  using 'BDC_OKCODE' '/EE'.
+  perform bdc_field tables bdc  using 'BDC_CURSOR' 'ST_VSTEL-LOW'.
+* ========>end of  + 16.03.2007 <=======
+
+
+* ========> - 16.03.2007 <=======
+*  PERFORM BDC_DYNPRO TABLES BDC USING 'SAPLALDB' '3000'.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'BDC_OKCODE' '=ACPT'.
+*
+*  PERFORM BDC_DYNPRO TABLES BDC USING 'RVV50R10C' '1000'.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'BDC_OKCODE' '=ONLI'.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'ST_LEDAT-HIGH' DATE .
+*  PERFORM BDC_FIELD  TABLES BDC USING 'P_LERUL' '2'.
+**  PERFORM bdc_field  TABLES bdc USING 'BDC_CURSOR' 'ST_VBELN-LOW'.
+**  PERFORM bdc_field  TABLES bdc USING 'ST_VBELN-LOW' i_data-vbeln.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'ST_LIFSP-LOW' '08'.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'ST_LIFSP-HIGH' '09'.
+*
+*  PERFORM BDC_DYNPRO TABLES BDC USING 'SAPLSLVC_FULLSCREEN' '0500'.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'BDC_OKCODE' '=&ALL'.
+*  PERFORM BDC_DYNPRO TABLES BDC USING 'SAPLSLVC_FULLSCREEN' '0500'.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'BDC_OKCODE' '=SAMD'.
+*
+*  PERFORM BDC_DYNPRO TABLES BDC USING 'SAPLSLVC_FULLSCREEN' '0500'.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'BDC_OKCODE' '=&F03'.
+*  PERFORM BDC_DYNPRO TABLES BDC USING 'RVV50R10C' '1000'.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'BDC_OKCODE' '/EE'.
+*  PERFORM BDC_FIELD  TABLES BDC USING 'BDC_CURSOR' 'ST_VSTEL-LOW'.
+* ========>end of  - 16.03.2007 <=======
+
+  free mt_vbsk_buffer_nast[].
+  export mt_vbsk_buffer_nast   to memory
+           id 'VL10_MSG_V5'.
+
+  zpick_id = 'ZPICK'.
+  export zpick_id to memory id 'ZPICK_ID'. "+DT20130327 memory id
+
+* --------> enhancement 16-3-2007
+  call transaction 'VL10A' using bdc mode p_mode update 'S'.
+* --------> end of enhancement 16-3-2007
+
+  import mt_vbsk_buffer_nast   from memory
+           id 'VL10_MSG_V5'.
+
+  perform update_deliv_picking.
+
+* >>> ccc00074 fix_delivery.
+  clear my_lips.
+  loop at my_lips.
+    perform fix_delivery.
+  endloop.
+
+  perform display_log.
+
+
+endform.                    " vl10a_batch
+*&---------------------------------------------------------------------*
+*&      Form  update_deliv_picking
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form update_deliv_picking.
+  data i_lips like lips occurs 0 with header line.
+  tables t006a.
+
+
+  data:
+     lt_prott like standard table of prott,
+     ls_prott like prott,
+     ls_vbkok like vbkok,
+     lt_vbpok like standard table of vbpok,
+     ls_vbpok like vbpok,
+     l_posnr  like vbup-posnr.
+  data: wa_auart like vbak-auart.
+  data: xref2_hd(16),
+       xref1_hd(16),
+       volum(18).
+  data : voleh like mara-voleh.
+  data : my_subrc like sy-subrc.
+
+  refresh c_vgpos_loc.
+  loop at mt_vbsk_buffer_nast  into wmt_vbsk_buffer_nast.
+
+    clear vbss.
+    select single * from vbss where sammg = wmt_vbsk_buffer_nast-sammg.
+
+    select * from lips  into table i_lips
+                         where vbeln = vbss-vbeln.
+    loop at i_lips.
+      read table i_data with key vbeln = i_lips-vgbel
+                                 posnr = i_lips-vgpos.
+
+      check  not  i_data-xref1_hd  is initial
+         or  not  i_data-xref2_hd  is initial.
+
+
+
+
+      clear: bdc, bdc[].
+      if p_ign = ' '.
+        perform check_storage using i_lips-matnr
+                                    i_lips-werks
+                                    i_lips-vgbel
+                                    i_lips-vgpos
+                              changing i_lips-lgort
+                                       my_subrc.
+
+        if my_subrc is not initial.
+          move-corresponding i_lips to  mesitab.
+          mesitab-msgtyp = 'I'.
+          mesitab-msgid = 'VL'.
+          mesitab-msgnr = '364'.
+          append mesitab.
+          continue.
+        endif.
+      endif.
+      clear t006a.
+      select single * from t006a where spras = sy-langu
+                                  and msehi = i_lips-meins.
+
+      data e_menge_1 type menge_d.
+      data meins1 type lmnga.
+      data pc1 type lmnga.
+      clear e_menge_1.
+      clear meins1.
+      clear pc1.
+*+DT20130219 <
+      clear vbap.
+      select single * from vbap
+                        where vbeln = i_data-vbeln
+                          and posnr = i_data-posnr.
+      clear mara.
+      select single * from mara where matnr = vbap-matnr.
+
+      if vbap-spart = '10' or
+          vbap-spart = '40' or
+           vbap-spart = '53'.
+        move i_data-xref2_hd to meins1. "+DT20130219
+      else.
+        if vbap-vrkme = mara-meins.
+          move i_data-xref2_hd to meins1.
+        else.
+          move i_data-xref1_hd to meins1.
+        endif.
+      endif.
+*+DT20130219 >
+      clear pc1.
+      move i_data-xref1_hd to pc1.
+      call function 'ZBILL_UOM'
+        exporting
+          vbeln           = i_lips-vgbel
+          posnr           = i_lips-vgpos
+          meins           = meins1
+          pc              = pc1
+       importing
+*   E_UOM           =
+*   E_MENGE         = i_data-xref2_hd
+         e_menge_n       = e_menge_1
+                .
+
+
+
+      write i_data-xref1_hd to    volum unit 'ST'.
+      write e_menge_1 to xref2_hd unit t006a-mseh3.
+
+
+
+      perform bdc_dynpro tables bdc  using 'SAPMV50A' '4004'.
+      perform bdc_field  tables bdc using 'BDC_CURSOR'
+                                    'LIKP-VBELN'.
+      perform bdc_field  tables bdc using 'BDC_OKCODE'
+                                    '/00'.
+      perform bdc_field  tables bdc using 'LIKP-VBELN'
+                                    i_lips-vbeln.
+
+      perform bdc_dynpro tables bdc using 'SAPMV50A' '1000'.
+      perform bdc_field  tables bdc using 'BDC_OKCODE'
+                                    '=POPO_T'.
+      perform bdc_field  tables bdc using 'BDC_CURSOR'
+                                    'LIPS-MATNR(02)'.
+      perform bdc_dynpro tables bdc using 'SAPMV50A' '0111'.
+      perform bdc_field  tables bdc using 'BDC_CURSOR'
+                                    'RV50A-POSNR'.
+      perform bdc_field  tables bdc   using 'BDC_OKCODE'
+                                    '=WEIT'.
+      perform bdc_field   tables bdc using 'RV50A-POSNR'
+                                    i_lips-posnr.
+      perform bdc_dynpro   tables bdc using 'SAPMV50A' '1000'.
+      perform bdc_field     tables bdc using 'BDC_OKCODE'
+                                    '/00'.
+      perform bdc_field    tables bdc  using 'BDC_CURSOR'
+                                    'LIPS-VRKME(01)'.
+      perform bdc_field    tables bdc  using 'LIPSD-G_LFIMG(01)'
+                                      xref2_hd.
+* >>> ccc00074 24.10.2011
+
+      clear likp.
+      select single * from likp where vbeln = i_lips-vbeln.
+
+      data check_name like tvarvc-name.
+      data behav.
+      data meins like mara-meins.
+      data e_menge_n type menge_d.
+      data meins_x type lmnga.
+      data pc_x type lmnga.
+      data e_uom type vrkme.
+
+      clear behav.
+      clear check_name.
+      clear e_menge_n.
+      clear : meins_x, pc_x.
+      clear e_uom.
+
+*      move i_data-xref2_hd to meins_x.
+*+DT20130219 <
+      if vbap-spart = '10' or
+          vbap-spart = '40' or
+           vbap-spart = '53'.
+        move i_data-xref2_hd to meins_x. "+DT20130219
+      else.
+        if vbap-vrkme = mara-meins.
+          move i_data-xref2_hd to meins_x.
+        else.
+          move i_data-xref1_hd to meins_x.
+        endif.
+      endif.
+*+DT20130219 >
+      move i_data-xref1_hd to pc_x.
+
+
+      call function 'ZBILL_UOM'
+        exporting
+          vbeln           = i_lips-vgbel
+          posnr           = i_lips-vgpos
+          meins           = meins_x
+          pc              = pc_x
+        importing
+          e_uom           = e_uom
+*         E_MENGE         =
+          e_menge_n       = e_menge_n
+                .
+
+      clear t006a.
+      select single mseh3 into voleh from t006a
+        where msehi = e_uom and
+              spras = sy-langu.
+      if sy-subrc = 0.
+      perform bdc_field    tables bdc  using 'LIPS-VRKME(01)'
+                                       voleh.
+      else.
+       perform bdc_field    tables bdc  using 'LIPS-VRKME(01)'
+                                       e_uom.
+      endif.
+      " i_lips-meins.
+
+
+
+*      CONCATENATE 'GI_NTGEW_' likp-vkorg INTO check_name.
+*      SELECT COUNT(*) FROM tvarvc WHERE name = check_name.
+*      IF sy-subrc = 0.
+*        CLEAR mara.
+*        SELECT SINGLE meins INTO meins FROM mara WHERE matnr = i_lips-matnr.
+*        IF i_lips-vrkme <> 'KG' AND meins = 'KG'.
+*          behav = 'X'.
+*        ENDIF.
+*      ENDIF.
+*
+*      IF behav <> 'X'.
+*        PERFORM bdc_field    TABLES bdc  USING 'LIPS-VRKME(01)'
+*                                         i_lips-meins.
+*      ENDIF.
+
+* <<<  ccc00074 24.10.2011
+
+      perform bdc_field    tables bdc  using 'LIPS-LGORT(01)'
+                                             i_lips-lgort.
+
+      perform bdc_dynpro    tables bdc using 'SAPMV50A' '1000'.
+      perform bdc_field     tables bdc using 'BDC_OKCODE'
+                                    '/00'.
+      clear wa_auart.
+      select single auart from vbak into wa_auart
+                         where vbeln = vbap-vbeln.
+
+      if wa_auart <> 'ZRE' and wa_auart <> 'ZKA'.
+        perform bdc_field    tables bdc  using 'BDC_CURSOR'
+                                                       'LIPSD-PIKMG(01)'.
+
+        perform bdc_field   tables bdc   using 'LIPSD-PIKMG(01)'
+                                              xref2_hd.
+      endif.
+
+*<nta050606 markoy ev. pick qty from to
+**      DATA: l_lvsta TYPE vbup-lvsta.
+**      SELECT SINGLE lvsta INTO l_lvsta FROM vbup
+**       WHERE vbeln = i_lips-vbeln
+**         AND posnr = i_lips-posnr.
+*     IF L_LVSTA IS INITIAL.  " commented NA 23/10/2008
+*+ NA 23/10/2008
+**      IF l_lvsta IS INITIAL AND i_lips-nopck <> 'X'.
+***+ NA 23/10/2008
+**        PERFORM bdc_field    TABLES bdc  USING 'BDC_CURSOR'
+**                                               'LIPSD-PIKMG(01)'.
+**        PERFORM bdc_field   TABLES bdc   USING 'LIPSD-PIKMG(01)'
+**                                               xref2_hd.
+**      ENDIF. " l_lvsta is initial.
+*>nta050606 markoy ev. pick qty from to
+      perform bdc_dynpro   tables bdc  using 'SAPMV50A' '1000'.
+      perform bdc_field    tables bdc  using 'BDC_OKCODE'
+                                    '=SICH_T'.
+      perform bdc_field   tables bdc using 'BDC_CURSOR'
+                                    'LIPS-VOLUM(01)'.
+      perform bdc_field   tables bdc using 'LIPS-VOLUM(01)'
+                                     volum.
+
+
+*      IF i_lips-voleh IS INITIAL.
+*        CLEAR voleh.
+*        SELECT SINGLE voleh FROM mara
+*                 INTO voleh WHERE matnr = i_lips-matnr.
+
+      clear t006a.
+      select single mseh3 into voleh from t006a
+        where msehi = 'ST' and
+              spras = sy-langu.
+
+*      ELSE.
+*        voleh = i_lips-voleh.
+*      ENDIF.
+
+      perform bdc_field  tables bdc using 'LIPS-VOLEH(01)'
+                                          voleh.
+
+
+      data charg type charg_d.
+      break ccc00074.
+
+      clear charg.
+      call function 'ZFIND_BATCH'
+        exporting
+          s_ord    = i_lips-vgbel
+          s_ord_it = i_lips-vgpos
+        importing
+          batch    = charg.
+      .
+
+
+* >>> ccc00074 22.09.2011 find batch check
+
+      data : wa_vbap type vbap,
+             wa_mska type mska,
+             wa_mchb type mchb,
+             t_mska type table of mska with header line .
+      clear wa_vbap.
+      select single * from vbap
+      into wa_vbap
+        where vbeln = i_lips-vgbel and
+              posnr = i_lips-vgpos.
+
+      if wa_vbap-bedae = 'KEL' or wa_vbap-bedae = 'KEK'.
+        if charg(1) = 'E'.
+          clear wa_mska.
+          select single * from mska
+          into wa_mska
+          where charg = charg and
+                vbeln = i_lips-vgbel and
+                posnr = i_lips-vgpos and
+                matnr = wa_vbap-matnr and
+                werks = wa_vbap-werks and
+                kalab > 0.
+          if sy-subrc <> 0.
+            charg(1) = 'S'.
+            clear wa_mska.
+            select single * from mska
+            into wa_mska
+            where charg = charg and
+              vbeln = i_lips-vgbel and
+              posnr = i_lips-vgpos and
+              matnr = wa_vbap-matnr and
+              werks = wa_vbap-werks and
+              kalab > 0.
+            if sy-subrc <> 0.
+              clear : t_mska, t_mska[].
+              select * from mska
+              into table t_mska
+              where
+                vbeln = i_lips-vgbel and
+                posnr = i_lips-vgpos and
+                matnr = wa_vbap-matnr and
+                werks = wa_vbap-werks and
+                kalab > 0
+                order by kalab descending.
+              if t_mska[] is not initial.
+                clear t_mska.
+                read table t_mska index 1.
+                charg = t_mska-charg.
+                "query ok - charg changed to most populated
+              else.
+                charg(1) = 'E'.
+                "query failed - no change made to charg
+              endif.
+            else.
+              "query ok - charg changed first digit from E to S
+            endif.
+          else.
+            "query ok - no change made to charg
+          endif.
+        elseif charg(1) = 'S'.
+          clear wa_mska.
+          select single * from mska
+          into wa_mska
+          where charg = charg and
+                vbeln = i_lips-vgbel and
+                posnr = i_lips-vgpos and
+                matnr = wa_vbap-matnr and
+                werks = wa_vbap-werks and
+                kalab > 0.
+          if sy-subrc <> 0.
+            charg(1) = 'E'.
+            clear wa_mska.
+            select single * from mska
+            into wa_mska
+            where charg = charg and
+              vbeln = i_lips-vgbel and
+              posnr = i_lips-vgpos and
+              matnr = wa_vbap-matnr and
+              werks = wa_vbap-werks and
+              kalab > 0.
+            if sy-subrc <> 0.
+              clear : t_mska, t_mska[].
+              select * from mska
+              into table t_mska
+              where
+                vbeln = i_lips-vgbel and
+                posnr = i_lips-vgpos and
+                matnr = wa_vbap-matnr and
+                werks = wa_vbap-werks and
+                kalab > 0
+                order by kalab descending.
+              if t_mska[] is not initial.
+                clear t_mska.
+                read table t_mska index 1.
+                charg = t_mska-charg.
+                "query ok - charg changed to most populated
+              else.
+                charg(1) = 'S'.
+                "query failed - no change made to charg
+              endif.
+            else.
+              "query ok - charg changed first digit from S to E
+            endif.
+          else.
+            "query ok - no change made to charg
+          endif.
+        endif.
+      elseif wa_vbap-bedae = 'KSV' or wa_vbap-bedae = 'KSL'
+        or wa_vbap-bedae = '041'.
+        if charg(1) = 'E'.
+          clear wa_mchb.
+          select single * from mchb
+          into wa_mchb
+          where charg = charg and
+                matnr = wa_vbap-matnr and
+                werks = wa_vbap-werks and
+                clabs > 0.
+          if sy-subrc <> 0.
+            charg(1) = 'S'.
+            clear wa_mchb.
+            select single * from mchb
+            into wa_mchb
+            where charg = charg and
+                  matnr = wa_vbap-matnr and
+                  werks = wa_vbap-werks and
+                  clabs > 0.
+            if sy-subrc <> 0.
+              charg(1) = 'E'.
+              "query failed - no changes made to charg
+            else.
+              "query ok - charg changed first digit from E to S
+            endif.
+          else.
+            "query ok - no change made to charg
+          endif.
+        elseif charg(1) = 'S'.
+          clear wa_mchb.
+          select single * from mchb
+          into wa_mchb
+          where charg = charg and
+                matnr = wa_vbap-matnr and
+                werks = wa_vbap-werks and
+                clabs > 0.
+          if sy-subrc <> 0.
+            charg(1) = 'E'.
+            clear wa_mchb.
+            select single * from mchb
+            into wa_mchb
+            where charg = charg and
+                  matnr = wa_vbap-matnr and
+                  werks = wa_vbap-werks and
+                  clabs > 0.
+            if sy-subrc <> 0.
+              charg(1) = 'S'.
+              "query failed - no changes made to charg
+            else.
+              "query ok - charg changed first digit from S to E
+            endif.
+          else.
+            "query ok - no change made to charg
+          endif.
+        endif.
+      endif.
+
+*        TABLES mcha.
+*        SELECT SINGLE * FROM mcha
+*          WHERE matnr = i_lips-matnr AND
+*                werks = i_lips-werks AND
+*                charg = charg.
+*        IF sy-subrc <> 0.
+*          CLEAR charg.
+*        ENDIF.
+
+
+      select single * from mara where matnr = wa_vbap-matnr.
+      if mara-xchpf = 'X'.
+
+        if wa_vbap-charg is initial.
+          perform bdc_field  tables bdc using 'LIPS-CHARG(01)'
+                                              charg.
+        else.
+          perform bdc_field  tables bdc using 'LIPS-CHARG(01)'
+                                             wa_vbap-charg.
+        endif.
+
+      endif.
+
+      refresh mitab.
+      call transaction 'VL02N' using bdc mode p_mode update 'S'
+                                        messages into mitab.
+
+      loop at  mitab.
+        move-corresponding i_lips to  mesitab.
+        move-corresponding mitab to  mesitab.
+        mesitab-unit2 =  t006a-mseh3.
+        append mesitab.
+      endloop.
+
+    endloop.
+
+* >>> ccc00074 24.10.2011
+    my_lips[] = i_lips[].
+* <<< ccc00074 24.10.2011
+
+  endloop.
+
+  clear vbup.
+  select single * from vbup
+                  where vbeln = vbss-vbeln
+                    and ( lvsta ne '' or
+                          lvsta ne 'C' ).
+  if sy-subrc eq 0.
+*   there is at least one item relevant for WM so cant pick now
+    select * from vbup
+             where vbeln = vbss-vbeln
+               and ( lvsta ne '' or
+                     lvsta ne 'C' ).
+
+      clear mesitab.
+      mesitab-vbeln = vbss-vbeln.
+      mesitab-posnr = vbup-posnr.
+      select single vgbel vgpos from lips
+                                into (mesitab-vgbel, mesitab-vgpos)
+                                where vbeln = vbss-vbeln
+                                  and posnr = vbup-posnr.
+      mesitab-msgtyp = 'E'.
+      mesitab-msgid = 'VL'.
+      mesitab-msgnr = '608'.
+      append mesitab.
+    endselect.
+  else.
+    clear: ls_vbpok, lt_vbpok[].
+    clear likp.
+    select single * from likp where vbeln = vbss-vbeln.
+
+    check sy-subrc = 0.
+    move-corresponding likp to ls_vbkok .
+
+
+    ls_vbkok-vbeln_vl = ls_vbkok-vbeln.     "Dlv no
+    ls_vbkok-komue    = 'X'.                "Do Picking
+    ls_vbkok-wabuc    = 'X'.                "Do GI
+
+    clear i_lips[].
+    select * from lips  into table i_lips
+                        where vbeln = likp-vbeln.
+
+    loop at i_lips.
+      read table i_data with key vbeln = i_lips-vgbel
+                                 posnr = i_lips-vgpos.
+
+      move-corresponding i_lips to ls_vbpok .
+
+      ls_vbpok-vbeln_vl = ls_vbpok-vbeln.                 "Dlv no
+      ls_vbpok-posnr_vl = ls_vbpok-posnn = lips-posnr.         "Dlv
+      ls_vbpok-taqui   = 'X'.
+
+*+DT20130219 <
+      clear vbap.
+      select single * from vbap
+                        where vbeln = i_data-vbeln
+                          and posnr = i_data-posnr.
+      clear mara.
+      select single * from mara where matnr = vbap-matnr.
+
+      if vbap-spart = '10' or
+          vbap-spart = '40' or
+           vbap-spart = '53'.
+**        move i_data-xref2_hd to meins1. "+DT20130219
+      else.
+        if vbap-vrkme = mara-meins.
+**          move i_data-xref2_hd to meins1.
+        else.
+          i_data-xref2_hd = i_data-xref1_hd.
+        endif.
+      endif.
+*+DT20130219 >
+
+
+      ls_vbpok-lgmng =
+      ls_vbpok-pikmg =
+      ls_vbpok-lfimg =  i_data-xref2_hd.
+
+
+
+      ls_vbpok-volum  = i_data-xref1_hd.
+
+*        if i_lips-meins ne i_lips-vrkme.
+*          LS_VBPOK-VRKME = i_lips-meins.
+*        endif.
+
+      ls_vbpok-kzvol = 'X'.
+      append ls_vbpok to lt_vbpok.
+    endloop.
+*++++++++++++++++++++++++++++++++
+**    call function 'SD_DELIVERY_UPDATE_PICKING'
+**      EXPORTING
+**        vbkok_wa               = ls_vbkok
+**        synchron               = 'X'
+**        no_messages_update     = ' '
+**        nicht_sperren          = 'X'
+**        aufrufer_t             = 'X'
+**        if_error_messages_send = ' '
+**      TABLES
+**        vbpok_tab              = lt_vbpok
+**        prot                   = lt_prott.
+**
+**    loop at lt_prott into ls_prott.
+**      move-corresponding likp to  mesitab.
+**      move-corresponding ls_prott to  mesitab.
+**      append mesitab.
+**    endloop.
+**
+**    call function 'BAPI_TRANSACTION_COMMIT'
+**      EXPORTING
+**        wait = 'X'.
+
+  endif.
+
+endform.                    " update_deliv_picking
+*&---------------------------------------------------------------------*
+*&      Form  display_log
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form display_log.
+
+  tables vbfs.
+
+  data ivbfs like vbfs occurs 0 with header line.
+
+  loop at mt_vbsk_buffer_nast  into wmt_vbsk_buffer_nast.
+    select * from vbfs where sammg = wmt_vbsk_buffer_nast-sammg.
+      if vbfs-msgid = 'VL' and vbfs-msgno = 150 and vbfs-msgty = 'I'.
+        read table c_vgpos_loc with key vgbel = vbfs-vbeln
+                                        vgpos = vbfs-posnr.
+        if sy-subrc eq 0.
+          continue.
+        endif.
+      endif.
+      move vbfs to ivbfs.
+      read table i_data with key vbeln = vbfs-vbeln
+                                 posnr = vbfs-posnr.
+      if sy-subrc = 0.
+        append ivbfs.
+      endif.
+    endselect.
+  endloop.
+
+  if ivbfs[] is not initial.
+    call function 'VBFS_TREE_LIST_DISPLAY'
+* EXPORTING
+*   I_VBFS_S_CB_PROGRAM            =
+*   I_VBFS_CB_PROGRAM              =
+*   I_VBFS_S_CB_USER_COMMAND       =
+*   I_VBFS_CB_USER_COMMAND         =
+*   I_VBFS_S_CB_GUI_STATUS         =
+*   I_VBFS_CB_GUI_STATUS           =
+*   I_VBFS_CALLED_BY               = ' '
+*   I_VBFS_CB_TOP_OF_PAGE          =
+*   I_VBFS_S_CB_TOP_OF_PAGE        =
+*   I_HOTSPOT_MODE                 = '3'
+*   I_TREE_TITLE                   = ' '
+*   I_VBTYP                        = ' '
+      tables
+        i_vbfs                         = ivbfs
+              .
+  endif.
+
+  leave to list-processing.
+  set pf-status 'Z01'.
+
+  sort mesitab by vbeln posnr vgbel vgpos.
+  data w_mesitab like mesitab.
+  loop at mesitab.
+    move mesitab to  w_mesitab.
+    read table i_data with key vbeln = w_mesitab-vgbel
+                               posnr = w_mesitab-vgpos.
+    check sy-subrc = 0.
+
+    at new  vbeln.
+      format color 1.
+      write:/ text-d01 , w_mesitab-vbeln.
+    endat .
+    at new  posnr.
+      format color 1.
+      write:/  text-d02, w_mesitab-posnr, text-d03, i_data-xref1_hd,
+          w_mesitab-unit2,  i_data-xref2_hd.
+      write
+:/  'MHNYMATA.', w_mesitab-posnr.
+    endat .
+
+
+    msgno = w_mesitab-msgnr.
+    call function 'J_2GWRITE_MESSAGE'
+      exporting
+        msgid            = w_mesitab-msgid
+        msgno            = msgno
+*   MSGV1            =
+*   MSGV2            =
+*   MSGV3            =
+*   MSGV4            =
+*   OUTPUT_MSG       = ' '
+*   NEW_LINE         = 'X'
+*   START            = 1
+*   WIDTH            = SY-LINSZ
+*   COL              = 0
+*   INT              = 1
+*   INV              = 0
+     importing
+       msgtxt           = hmessage
+              .
+    if w_mesitab-msgtyp = 'E'.
+      format color 3.
+    else.
+      format color 2.
+    endif.
+
+    write:/ 'Sales order:', w_mesitab-vgbel, 'Item:', w_mesitab-vgpos.
+    write:/ w_mesitab-msgv1,w_mesitab-msgv2, hmessage.
+*
+*    AT END OF VGPOS.
+*
+*    ENDAT.
+    at end of vbeln.
+      format color 1.
+      skip.
+    endat.
+
+  endloop.
+  refresh  mesitab .
+endform.                    " display_log
+*&---------------------------------------------------------------------*
+*&      Form  fill_i_data-zmenge
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form fill_i_data-zmenge.
+
+  data: temp_menge type p decimals 0.
+
+  loop at i_data.
+
+    move i_data-wmeng  to  temp_menge .
+    i_data-wmeng  =  temp_menge.
+
+    move i_data-bmeng  to  temp_menge .
+    i_data-bmeng  =  temp_menge.
+
+    move i_data-dif_deliv_q  to  temp_menge .
+    i_data-dif_deliv_q  =  temp_menge.
+
+    move i_data-make_to_order  to  temp_menge .
+    i_data-make_to_order  =  temp_menge.
+
+    move i_data-make_to_stock  to  temp_menge .
+    i_data-make_to_stock  =  temp_menge.
+    i_data-zmenge = i_data-wmeng - i_data-dif_deliv_q .
+    modify i_data.
+  endloop.
+  loop at i_data .
+    i_data-zmenge = i_data-wmeng - i_data-dif_deliv_q .
+*    if i_data-vrkme = 'M'.
+*      i_data-zmenge = i_data-kwmeng. "-DT20130426
+*    endif.
+    if i_data-zmenge = 0.
+      delete i_data.
+    else.
+      modify i_data.
+    endif.
+  endloop.
+
+
+endform.                    " fill_i_data-zmenge
+*&---------------------------------------------------------------------*
+*&      Form  alv
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form alv.
+
+  call function 'REUSE_ALV_GRID_DISPLAY'
+   exporting
+*    I_INTERFACE_CHECK                 = 'X'
+*   I_BYPASSING_BUFFER                =
+*   I_BUFFER_ACTIVE                   = ' '
+     i_callback_program                = ls_variant-report
+    i_callback_pf_status_set          = 'FULLSCREEN'
+  i_callback_user_command             = 'USER_COMMAND'
+*     i_callback_top_of_page            = 'XTOP_OF_PAGE'
+*   I_CALLBACK_HTML_TOP_OF_PAGE      =
+*   I_CALLBACK_HTML_END_OF_LIST       = ' '
+*   I_STRUCTURE_NAME                  =
+*   I_BACKGROUND_ID                   = ' '
+     i_grid_title                      = text-r01
+*    i_grid_settings                   = struc
+     is_layout                         = ls_layout
+     it_fieldcat                       = fieldcat[]
+*   IT_EXCLUDING                      =
+*   IT_SPECIAL_GROUPS                 =
+       it_sort                           =  ls_sort
+*   IT_FILTER                         =
+*   IS_SEL_HIDE                       =
+*   I_DEFAULT                         = 'X'
+       i_save                            = 'A'
+       is_variant                        = ls_variant
+       it_events                         = ls_event[]
+*   IT_EVENT_EXIT                     =
+*   IS_PRINT                          = LS_PRINT
+*   IS_REPREP_ID                      =
+*   I_SCREEN_START_COLUMN             = 3
+*   I_SCREEN_START_LINE               = 3
+*   I_SCREEN_END_COLUMN               = 100
+*   I_SCREEN_END_LINE                 = 50
+*   IT_ALV_GRAPHICS                   =
+*   IT_ADD_FIELDCAT                   =
+*   IT_HYPERLINK                      =
+* IMPORTING
+*   E_EXIT_CAUSED_BY_CALLER           =
+*   ES_EXIT_CAUSED_BY_USER            =
+       tables
+       t_outtab                          =  i_data
+* EXCEPTIONS
+*   PROGRAM_ERROR                     = 1
+*   OTHERS                            = 2
+   .
+
+
+endform.                    " alv
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0050  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+module status_0050 output.
+  set pf-status '050'.
+  set titlebar  '050'.
+
+  clear ok_code  .
+  clear saved_ok .
+
+endmodule.                 " STATUS_0050  OUTPUT
+*&---------------------------------------------------------------------*
+*&      Module  exiting  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+module exiting input.
+  if ok_code = 'CANCEL' .
+    do_back = 'X' .
+    leave program .
+  elseif ok_code = 'EXIT' .
+    do_back = 'X' .
+    leave to screen 0 .
+  endif .
+endmodule.                 " exiting  INPUT
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0050  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+module user_command_0050 input.
+  data c1.
+  saved_ok = ok_code .
+  clear ok_code .
+  clear sy-ucomm .
+  case saved_ok.
+    when 'SPLIT' .
+      c1 = 'X'.
+      perform check_blanks changing c1.
+      if c1 = 'X'.
+        clear do_back .
+        do_split = 'X' .
+        leave to screen 0 .
+      endif.
+    when 'BACK' .
+      clear do_split .
+      do_back = 'X' .
+      leave to screen 0 .
+    when  'PRN' .
+      if p_pra4 = 'X'.
+        perform printa4.
+      else.
+        sums_preview = 'X' .
+        call screen '051' .
+        clear sums_preview .
+        clear saved_ok .
+        clear ok_code  .
+        clear sy-ucomm .
+      endif.
+    when 'CALC'.
+      perform calc.
+    when 'SELA'.
+      perform sela.
+    when 'DSELA'.
+      perform dsela.
+    when 'COPY'.
+      perform copy_qty.
+    when others.
+      clear do_back .
+      clear do_split .
+
+  endcase .
+
+endmodule.                 " USER_COMMAND_0050  INPUT
+
+*&spwizard: declaration of tablecontrol 'SUMS_CNTRL' itself
+controls: sums_cntrl type tableview using screen 0050.
+
+*&spwizard: lines of tablecontrol 'SUMS_CNTRL'
+data:     g_sums_cntrl_lines  like sy-loopc.
+
+*&spwizard: output module for tc 'SUMS_CNTRL'. do not change this line!
+*&spwizard: update lines for equivalent scrollbar
+module sums_cntrl_change_tc_attr output.
+  describe table i_sums lines sums_cntrl-lines.
+endmodule.                    "SUMS_CNTRL_CHANGE_TC_ATTR OUTPUT
+
+*&spwizard: output module for tc 'SUMS_CNTRL'. do not change this line!
+*&spwizard: get lines of tablecontrol
+module sums_cntrl_get_lines output.
+  g_sums_cntrl_lines = sy-loopc.
+endmodule.                    "SUMS_CNTRL_GET_LINES OUTPUT
+
+*&spwizard: input module for tc 'SUMS_CNTRL'. do not change this line!
+*&spwizard: modify table
+module sums_cntrl_modify input.
+  modify i_sums
+    index sums_cntrl-current_line
+    transporting xref1_hd xref2_hd prop_bat check.
+  perform check_weight.
+
+endmodule.                    "SUMS_CNTRL_MODIFY INPUT
+
+*&spwizard: input module for tc 'SUMS_CNTRL'. do not change this line!
+*&spwizard: process user command
+module sums_cntrl_user_command input.
+  ok_code = sy-ucomm.
+  perform user_ok_tc using    'SUMS_CNTRL'
+                              'I_SUMS'
+                              ' '
+                     changing ok_code.
+  sy-ucomm = ok_code.
+endmodule.                    "SUMS_CNTRL_USER_COMMAND INPUT
+
+*----------------------------------------------------------------------*
+*   INCLUDE TABLECONTROL_FORMS                                         *
+*----------------------------------------------------------------------*
+
+*&---------------------------------------------------------------------*
+*&      Form  USER_OK_TC                                               *
+*&---------------------------------------------------------------------*
+form user_ok_tc using    p_tc_name type dynfnam
+                         p_table_name
+                         p_mark_name
+                changing p_ok      like sy-ucomm.
+
+*-BEGIN OF LOCAL DATA--------------------------------------------------*
+  data: l_ok              type sy-ucomm,
+        l_offset          type i.
+*-END OF LOCAL DATA----------------------------------------------------*
+
+* Table control specific operations                                    *
+*   evaluate TC name and operations                                    *
+  search p_ok for p_tc_name.
+  if sy-subrc <> 0.
+    exit.
+  endif.
+  l_offset = strlen( p_tc_name ) + 1.
+  l_ok = p_ok+l_offset.
+* execute general and TC specific operations                           *
+  case l_ok.
+    when 'INSR'.                      "insert row
+      perform fcode_insert_row using    p_tc_name
+                                        p_table_name.
+      clear p_ok.
+
+    when 'DELE'.                      "delete row
+      perform fcode_delete_row using    p_tc_name
+                                        p_table_name
+                                        p_mark_name.
+      clear p_ok.
+
+    when 'P--' or                     "top of list
+         'P-'  or                     "previous page
+         'P+'  or                     "next page
+         'P++'.                       "bottom of list
+      perform compute_scrolling_in_tc using p_tc_name
+                                            l_ok.
+      clear p_ok.
+*     WHEN 'L--'.                       "total left
+*       PERFORM FCODE_TOTAL_LEFT USING P_TC_NAME.
+*
+*     WHEN 'L-'.                        "column left
+*       PERFORM FCODE_COLUMN_LEFT USING P_TC_NAME.
+*
+*     WHEN 'R+'.                        "column right
+*       PERFORM FCODE_COLUMN_RIGHT USING P_TC_NAME.
+*
+*     WHEN 'R++'.                       "total right
+*       PERFORM FCODE_TOTAL_RIGHT USING P_TC_NAME.
+*
+    when 'MARK'.                      "mark all filled lines
+      perform fcode_tc_mark_lines using p_tc_name
+                                        p_table_name
+                                        p_mark_name   .
+      clear p_ok.
+
+    when 'DMRK'.                      "demark all filled lines
+      perform fcode_tc_demark_lines using p_tc_name
+                                          p_table_name
+                                          p_mark_name .
+      clear p_ok.
+
+*     WHEN 'SASCEND'   OR
+*          'SDESCEND'.                  "sort column
+*       PERFORM FCODE_SORT_TC USING P_TC_NAME
+*                                   l_ok.
+
+  endcase.
+
+endform.                              " USER_OK_TC
+
+*&---------------------------------------------------------------------*
+*&      Form  FCODE_INSERT_ROW                                         *
+*&---------------------------------------------------------------------*
+form fcode_insert_row
+              using    p_tc_name           type dynfnam
+                       p_table_name             .
+
+*-BEGIN OF LOCAL DATA--------------------------------------------------*
+  data l_lines_name       like feld-name.
+  data l_selline          like sy-stepl.
+  data l_lastline         type i.
+  data l_line             type i.
+  data l_table_name       like feld-name.
+  field-symbols <tc>                 type cxtab_control.
+  field-symbols <table>              type standard table.
+  field-symbols <lines>              type i.
+*-END OF LOCAL DATA----------------------------------------------------*
+
+  assign (p_tc_name) to <tc>.
+
+* get the table, which belongs to the tc                               *
+  concatenate p_table_name '[]' into l_table_name. "table body
+  assign (l_table_name) to <table>.                "not headerline
+
+* get looplines of TableControl
+  concatenate 'G_' p_tc_name '_LINES' into l_lines_name.
+  assign (l_lines_name) to <lines>.
+
+* get current line
+  get cursor line l_selline.
+  if sy-subrc <> 0.                   " append line to table
+    l_selline = <tc>-lines + 1.
+*&SPWIZARD: set top line and new cursor line                           *
+    if l_selline > <lines>.
+      <tc>-top_line = l_selline - <lines> + 1 .
+    else.
+      <tc>-top_line = 1.
+    endif.
+  else.                               " insert line into table
+    l_selline = <tc>-top_line + l_selline - 1.
+    l_lastline = <tc>-top_line + <lines> - 1.
+  endif.
+*&SPWIZARD: set new cursor line                                        *
+  l_line = l_selline - <tc>-top_line + 1.
+* insert initial line
+  insert initial line into <table> index l_selline.
+  <tc>-lines = <tc>-lines + 1.
+* set cursor
+  set cursor line l_line.
+
+endform.                              " FCODE_INSERT_ROW
+
+*&---------------------------------------------------------------------*
+*&      Form  FCODE_DELETE_ROW                                         *
+*&---------------------------------------------------------------------*
+form fcode_delete_row
+              using    p_tc_name           type dynfnam
+                       p_table_name
+                       p_mark_name   .
+
+*-BEGIN OF LOCAL DATA--------------------------------------------------*
+  data l_table_name       like feld-name.
+
+  field-symbols <tc>         type cxtab_control.
+  field-symbols <table>      type standard table.
+  field-symbols <wa>.
+  field-symbols <mark_field>.
+*-END OF LOCAL DATA----------------------------------------------------*
+
+  assign (p_tc_name) to <tc>.
+
+* get the table, which belongs to the tc                               *
+  concatenate p_table_name '[]' into l_table_name. "table body
+  assign (l_table_name) to <table>.                "not headerline
+
+* delete marked lines                                                  *
+  describe table <table> lines <tc>-lines.
+
+  loop at <table> assigning <wa>.
+
+*   access to the component 'FLAG' of the table header                 *
+    assign component p_mark_name of structure <wa> to <mark_field>.
+
+    if <mark_field> = 'X'.
+      delete <table> index syst-tabix.
+      if sy-subrc = 0.
+        <tc>-lines = <tc>-lines - 1.
+      endif.
+    endif.
+  endloop.
+
+endform.                              " FCODE_DELETE_ROW
+
+*&---------------------------------------------------------------------*
+*&      Form  COMPUTE_SCROLLING_IN_TC
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_TC_NAME  name of tablecontrol
+*      -->P_OK       ok code
+*----------------------------------------------------------------------*
+form compute_scrolling_in_tc using    p_tc_name
+                                      p_ok.
+*-BEGIN OF LOCAL DATA--------------------------------------------------*
+  data l_tc_new_top_line     type i.
+  data l_tc_name             like feld-name.
+  data l_tc_lines_name       like feld-name.
+  data l_tc_field_name       like feld-name.
+
+  field-symbols <tc>         type cxtab_control.
+  field-symbols <lines>      type i.
+*-END OF LOCAL DATA----------------------------------------------------*
+
+  assign (p_tc_name) to <tc>.
+* get looplines of TableControl
+  concatenate 'G_' p_tc_name '_LINES' into l_tc_lines_name.
+  assign (l_tc_lines_name) to <lines>.
+
+
+* is no line filled?                                                   *
+  if <tc>-lines = 0.
+*   yes, ...                                                           *
+    l_tc_new_top_line = 1.
+  else.
+*   no, ...                                                            *
+    call function 'SCROLLING_IN_TABLE'
+         exporting
+              entry_act             = <tc>-top_line
+              entry_from            = 1
+              entry_to              = <tc>-lines
+              last_page_full        = 'X'
+              loops                 = <lines>
+              ok_code               = p_ok
+              overlapping           = 'X'
+         importing
+              entry_new             = l_tc_new_top_line
+         exceptions
+*              NO_ENTRY_OR_PAGE_ACT  = 01
+*              NO_ENTRY_TO           = 02
+*              NO_OK_CODE_OR_PAGE_GO = 03
+              others                = 0.
+  endif.
+
+* get actual tc and column                                             *
+  get cursor field l_tc_field_name
+             area  l_tc_name.
+
+  if syst-subrc = 0.
+    if l_tc_name = p_tc_name.
+*     set actual column                                                *
+      set cursor field l_tc_field_name line 1.
+    endif.
+  endif.
+
+* set the new top line                                                 *
+  <tc>-top_line = l_tc_new_top_line.
+
+
+endform.                              " COMPUTE_SCROLLING_IN_TC
+
+*&---------------------------------------------------------------------*
+*&      Form  FCODE_TC_MARK_LINES
+*&---------------------------------------------------------------------*
+*       marks all TableControl lines
+*----------------------------------------------------------------------*
+*      -->P_TC_NAME  name of tablecontrol
+*----------------------------------------------------------------------*
+form fcode_tc_mark_lines using p_tc_name
+                               p_table_name
+                               p_mark_name.
+*-BEGIN OF LOCAL DATA--------------------------------------------------*
+  data l_table_name       like feld-name.
+
+  field-symbols <tc>         type cxtab_control.
+  field-symbols <table>      type standard table.
+  field-symbols <wa>.
+  field-symbols <mark_field>.
+*-END OF LOCAL DATA----------------------------------------------------*
+
+  assign (p_tc_name) to <tc>.
+
+* get the table, which belongs to the tc                               *
+  concatenate p_table_name '[]' into l_table_name. "table body
+  assign (l_table_name) to <table>.                "not headerline
+
+* mark all filled lines                                                *
+  loop at <table> assigning <wa>.
+
+*   access to the component 'FLAG' of the table header                 *
+    assign component p_mark_name of structure <wa> to <mark_field>.
+
+    <mark_field> = 'X'.
+  endloop.
+endform.                                          "fcode_tc_mark_lines
+
+*&---------------------------------------------------------------------*
+*&      Form  FCODE_TC_DEMARK_LINES
+*&---------------------------------------------------------------------*
+*       demarks all TableControl lines
+*----------------------------------------------------------------------*
+*      -->P_TC_NAME  name of tablecontrol
+*----------------------------------------------------------------------*
+form fcode_tc_demark_lines using p_tc_name
+                                 p_table_name
+                                 p_mark_name .
+*-BEGIN OF LOCAL DATA--------------------------------------------------*
+  data l_table_name       like feld-name.
+
+  field-symbols <tc>         type cxtab_control.
+  field-symbols <table>      type standard table.
+  field-symbols <wa>.
+  field-symbols <mark_field>.
+*-END OF LOCAL DATA----------------------------------------------------*
+
+  assign (p_tc_name) to <tc>.
+
+* get the table, which belongs to the tc                               *
+  concatenate p_table_name '[]' into l_table_name. "table body
+  assign (l_table_name) to <table>.                "not headerline
+
+* demark all filled lines                                              *
+  loop at <table> assigning <wa>.
+
+*   access to the component 'FLAG' of the table header                 *
+    assign component p_mark_name of structure <wa> to <mark_field>.
+
+    <mark_field> = space.
+  endloop.
+endform.                                          "fcode_tc_mark_lines
+*&---------------------------------------------------------------------*
+*&      Form  split
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form split.
+  data: mydif type p decimals 3.
+  data : balance_a like i_data-xref1_hd .
+  data : balance_b like i_data-xref2_hd .
+
+  data : last_line like i_data .
+
+* assing pc's
+  sort i_data by
+     sold_to
+     color
+     profil
+     length
+     vrkme
+     vbeln
+     color_up
+     color_down
+  .
+
+  loop at i_sums
+    where ( xref1_hd <> 0 or xref2_hd <> 0 )
+      and check = 'X' . "@@@@
+
+    clear  balance_a  .
+    clear  balance_b  .
+
+    balance_a = i_sums-xref1_hd .
+    balance_b = i_sums-xref2_hd .
+
+
+*  Assign PC's
+    loop at i_data
+      where sold_to = i_sums-sold_to
+        and color   = i_sums-color
+        and profil  = i_sums-profil
+        and length  = i_sums-length
+        and vrkme   = i_sums-vrkme
+        and color_up = i_sums-color_up
+        and color_down = i_sums-color_down.
+
+      if not i_sums-vbeln is initial.
+        check i_data-vbeln = i_sums-vbeln. "+DT20130415
+        check i_data-posnr = i_sums-posnr."+DT20130415
+      endif.
+
+      if balance_a > 0 .
+        if i_data-zmenge <= balance_a  .
+
+          i_data-xref1_hd = i_data-zmenge .
+
+        else .
+
+          i_data-xref1_hd = balance_a .
+
+        endif .
+        balance_a  =  balance_a  - i_data-xref1_hd .
+
+      endif .
+      i_data-check = 'X'. "@@@@
+      modify i_data .
+      last_line = i_data .
+    endloop . "at i_data
+    if sy-subrc = 0 and balance_a > 0 .
+      loop at i_data
+         where sold_to = i_sums-sold_to
+           and color   = i_sums-color
+           and profil  = i_sums-profil
+           and length  = i_sums-length
+           and vrkme   = i_sums-vrkme
+           and color_up = i_sums-color_up
+          and color_down = i_sums-color_down.
+
+        if not i_sums-vbeln is initial.
+          check i_data-vbeln = i_sums-vbeln. "+DT20130415
+          check i_data-posnr = i_sums-posnr."+DT20130415
+        endif.
+
+        check i_data = last_line .
+        i_data-xref1_hd = i_data-xref1_hd + balance_a .
+        clear balance_a .
+        i_data-check = 'X'. "@@@@
+        modify i_data .
+      endloop . "rest pc's
+    endif .
+
+* Assign kg's
+    loop at i_data
+       where sold_to = i_sums-sold_to
+         and color   = i_sums-color
+         and profil  = i_sums-profil
+         and length  = i_sums-length
+         and vrkme   = i_sums-vrkme
+         and color_up = i_sums-color_up
+         and color_down = i_sums-color_down..
+
+      if not i_sums-vbeln is initial.
+        check i_data-vbeln = i_sums-vbeln. "+DT20130415
+        check i_data-posnr = i_sums-posnr."+DT20130415
+      endif.
+      .
+      i_data-xref2_hd = i_data-xref1_hd / i_sums-xref1_hd
+                      * i_sums-xref2_hd .
+      balance_b  = balance_b - i_data-xref2_hd .
+* DP + --> 22/10/2008
+      if i_data-vrkme = 'ST'.
+        clear marm.
+        select single * from marm where matnr = i_data-matnr
+                                    and meinh = i_data-vrkme.
+        if sy-subrc = 0.
+          if marm-umren ne 0.
+            i_data-tmenge = i_data-xref1_hd * marm-umrez / marm-umren.
+          endif.
+        endif.
+      endif.
+* DP + <-- 22/10/2008
+      i_data-check = 'X'. "@@@@
+      modify i_data .
+      last_line = i_data .
+    endloop .
+    if sy-subrc = 0 and balance_b <> 0 .
+      loop at i_data
+         where sold_to = i_sums-sold_to
+           and color   = i_sums-color
+           and profil  = i_sums-profil
+           and length  = i_sums-length
+           and vrkme   = i_sums-vrkme
+        and color_up = i_sums-color_up
+          and color_down = i_sums-color_down..
+
+        if not i_sums-vbeln is initial.
+          check i_data-vbeln = i_sums-vbeln. "+DT20130415
+          check i_data-posnr = i_sums-posnr."+DT20130415
+        endif.
+        .
+        check i_data = last_line .
+        i_data-xref2_hd = i_data-xref2_hd + balance_b .
+        if i_data-xref2_hd ne i_data-tmenge. "+DP
+          i_data-flag = 'X'.
+        endif.
+        clear balance_b .
+        i_data-check = 'X'. "@@@@
+        modify i_data .
+      endloop . "rest kg's
+    endif .
+
+* DP + --> 22/10/2008
+    data c_length(6) type c.
+    data n_length type p decimals 3.
+    data my_mara type mara.
+
+    loop at i_data
+         where sold_to = i_sums-sold_to
+           and color   = i_sums-color
+           and profil  = i_sums-profil
+           and length  = i_sums-length
+           and vrkme   = i_sums-vrkme
+      and color_up = i_sums-color_up
+          and color_down = i_sums-color_down..
+
+      if not i_sums-vbeln is initial.
+        check i_data-vbeln = i_sums-vbeln. "+DT20130415
+        check i_data-posnr = i_sums-posnr."+DT20130415
+      endif.
+
+      clear mydif.
+      mydif = ( i_data-xref2_hd - i_data-tmenge ) / i_data-xref2_hd.
+
+      clear : c_length, n_length.
+      move i_data-length(6) to c_length.
+      replace all occurrences of ',' in c_length with '.'.
+      move c_length to n_length.
+      clear my_mara.
+      select single * into my_mara from mara
+        where matnr = i_data-matnr.
+
+      mydif = mydif * n_length / my_mara-zlength.
+
+      if abs( mydif ) gt '0.1'. "+DP
+        i_data-w_diff = 'X'.
+        weight_dif    = 'X'.
+      endif.
+      i_data-check = 'X'. "@@@@
+      modify i_data .
+    endloop . "check kg's
+* DP + <-- 22/10/2008
+
+  endloop .
+
+*@@@@
+  loop at i_data.
+    if i_data-check is initial.
+      delete i_data.
+    endif.
+  endloop.
+
+endform.                    " split
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0051  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+module status_0051 output.
+*  SET PF-STATUS 'xxxxxxxx'.
+*
+  set pf-status '051' .
+  set titlebar  '051' .
+
+  suppress dialog .
+  leave to list-processing and return to screen 0  .
+
+  perform preview_sums .
+
+endmodule.                 " STATUS_0051  OUTPUT
+*&---------------------------------------------------------------------*
+*&      Form  preview_sums
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form preview_sums.
+
+  data lines type i .
+
+* display also orders
+  sort i_data by
+     sold_to
+     color
+     profil
+     length
+     vrkme
+     vbeln
+  .
+
+*mga______________________________
+  data:
+       vlenght(15),
+       vcolor(15)
+       .
+*mga______________________________
+
+* =========> + ETEM ENHANCEMENT 2-3-2007
+  if p_sort = 'X'.
+   sort i_sums by color profil . "@dt20130924
+  endif.
+  sort i_data by vbeln posnr .
+* =========> END OF + ETEM ENHANCEMENT 2-3-2007
+  loop at i_sums  .
+    at first .
+*    new-page line-size 132 line-count 65 . "ARISK-
+      new-page line-size 255 line-count 65 . "ARISK+
+
+    endat .
+
+    clear lines .
+
+*  Assign PC's
+    loop at i_data
+      where sold_to = i_sums-sold_to
+        and color   = i_sums-color
+        and profil  = i_sums-profil
+        and length  = i_sums-length
+        and vrkme   = i_sums-vrkme
+        and color_up = i_sums-color_up
+        and color_down = i_sums-color_down.
+      .
+      lines = lines + 1 .
+    endloop .
+    lines = lines + 2 .
+    reserve lines lines .
+*mga <<<<<<<<<<<<<<<<
+
+*Keep data temporary
+    vlenght = i_sums-length.
+    vcolor  = i_sums-color.
+
+    data:
+         _arktx like vbap-arktx,
+         vspart like vbap-spart,
+         field(19)
+         .
+    constants:
+              _spart like vbap-spart
+              value '30',
+              _spart2 like vbap-spart
+              value '51'.
+
+    select single arktx spart
+           into   (_arktx,vspart)
+           from vbap
+           where
+                vbeln = i_data-vbeln
+           and  posnr = i_data-posnr
+           .
+    if sy-subrc = 0.
+      if vspart = _spart
+          or vspart = _spart2.
+        field         = _arktx(19).
+        i_sums-length = _arktx+19(9).
+        i_sums-color  = _arktx+28(10).
+      endif.
+    endif.
+*mga <<<<<<<<<<<<<<<<
+    write :
+      /1(1)   sy-vline ,
+      2(35)   i_sums-sold_to ,
+      38(1)   sy-vline ,
+     40(11)   i_sums-profil ,
+     51(1)    sy-vline ,
+     53(19)   field, "mga
+     73(1)    sy-vline,         "ARISK+
+     75(9)    i_sums-length ,
+     85(1)    sy-vline ,
+     87(10)   i_sums-color ,
+     98(1)    sy-vline ,
+     100(10)  i_sums-zmenge unit i_sums-vrkme ,
+     111(1)   sy-vline ,
+     113(10)  i_sums-vmeng unit i_sums-vrkme,
+     125(1)   sy-vline,
+     127(5)   i_sums-vrkme ,
+     133(1)   sy-vline ,
+    146(1)    sy-vline ,
+    167(1)    sy-vline,
+    201(1)    sy-vline,
+    215(1)    sy-vline.  "ARISK+
+
+
+    if i_sums-xref1_hd <> 0 .
+      write at 99(10)   i_sums-xref1_hd .
+    endif .
+    if i_sums-xref2_hd <> 0 .
+      write at 112(17)   i_sums-xref2_hd .
+    endif .
+
+*mga______________________________
+*Return temporary data
+    i_sums-length = vlenght.
+    i_sums-color  = vcolor.
+*mga______________________________
+
+*  Print Orders
+    loop at i_data
+      where sold_to = i_sums-sold_to
+        and color   = i_sums-color
+        and profil  = i_sums-profil
+        and length  = i_sums-length
+        and vrkme   = i_sums-vrkme
+        .
+      data wa_vbeln(10) .
+      data wa_posnr(10) .
+      data wa_txt(20) .
+
+      write : i_data-vbeln  to wa_vbeln .
+      write : i_data-posnr  to wa_posnr .
+
+      concatenate
+         wa_vbeln
+         wa_posnr
+       into
+         wa_txt
+       separated by ' / '
+       .
+      write :
+
+        /1(1)   sy-vline ,
+        2(35)   wa_txt ,
+        38(1)   sy-vline ,
+       40(10)   space , "i_sums-profil ,
+       51(1)    sy-vline ,
+       53(18)   i_data-matnr,  "ARISK+
+       73(1)    sy-vline,      "ARISK+
+       75(9)    space , "i_sums-length ,
+       85(1)    sy-vline ,
+       87(10)   space , "i_sums-color ,
+       98(1)    sy-vline ,
+       100(10)  i_data-zmenge unit i_data-vrkme ,
+       111(1)   sy-vline ,
+       113(10)  i_data-vmeng unit i_data-vrkme,
+       125(1)   sy-vline,
+       127(5)   i_data-vrkme ,
+       133(1)   sy-vline ,
+      146(1)    sy-vline ,
+      167(1)    sy-vline,
+      169(30)   i_data-text, "ARISK+
+      201(1)    sy-vline.    "ARISK+
+* For eksartimata.
+      if vspart = _spart
+          or vspart = _spart2.
+        write : 202(13)  i_data-av_qty unit 'ST'.
+      endif.
+      write : 215(1) sy-vline.
+
+    endloop .
+    write at :/1(215) sy-uline .
+
+*mga <<<<<<<<<<
+    clear:
+    i_sums-length,
+    i_sums-color,
+    field
+    .
+*mga <<<<<<<<<<
+
+  endloop .
+
+* NEW-PAGE PRINT OFF.
+
+endform.                    " preview_sums
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0051  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+module user_command_0051 input.
+
+**  DATA: OKCODE LIKE SY-UCOMM.
+**  OKCODE = SY-UCOMM.
+**  CLEAR SY-UCOMM.
+**
+**  CASE okcode.
+**    WHEN '&PRI'.
+**      PERFORM PRINTA4.
+**
+**  ENDCASE.
+
+
+endmodule.                 " USER_COMMAND_0051  INPUT
+*&---------------------------------------------------------------------*
+*&      Form  CHECK_FIELDS
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form check_fields .
+  if  p_mode ne 'E'
+  and p_mode ne 'N'
+  and p_mode ne 'A' .
+    message i398(00) with 'MODE IS A)ll N)one E)rrors' .
+  endif .
+endform.                    " CHECK_FIELDS
+
+*&---------------------------------------------------------------------*
+*&      Form  check_storage
+*&---------------------------------------------------------------------*
+form check_storage using p_matnr
+                         p_werks
+                         p_vgbel
+                         p_vgpos
+                   changing p_lgort
+                            p_subrc.
+  data : ls_vbap like vbap.
+  data : lt_mska like mska occurs 0 with header line.
+  data : lt_mard like mard occurs 0 with header line.
+  data : max_cnt type i.
+  data : idx_cnt type i.
+
+  p_subrc = 4.
+* when change of storage location occurs.. need to keep the
+* vgbel and vgpos in order to ignore availability message from vbfs
+
+  select single * from vbap into ls_vbap
+                  where vbeln = p_vgbel
+                    and posnr = p_vgpos.
+  case ls_vbap-bedae.
+    when 'KEL' or 'KEK'.
+      select * from mska
+               into corresponding fields of table lt_mska
+               where matnr = p_matnr
+                 and werks = p_werks
+                 and vbeln = p_vgbel
+                 and posnr = p_vgpos.
+      sort lt_mska by kalab descending.
+      describe table lt_mska lines max_cnt.
+      clear idx_cnt.
+      do.
+        idx_cnt = idx_cnt + 1.
+        if idx_cnt gt max_cnt.
+          exit.
+        endif.
+        read table lt_mska index idx_cnt.
+        if sy-subrc eq 0 and  i_data-xref2_hd le lt_mska-kalab .
+          if p_lgort ne lt_mska-lgort.
+            c_vgpos_loc-vgbel = p_vgbel.
+            c_vgpos_loc-vgpos = p_vgpos.
+            append c_vgpos_loc.
+          endif.
+          p_lgort = lt_mska-lgort.
+          clear p_subrc.
+          exit.
+        endif.
+      enddo.
+
+    when 'KSV' or  'KSL' or '041'.
+      select * from mard
+               into corresponding fields of table lt_mard
+               where matnr = p_matnr
+                 and werks = p_werks.
+      sort lt_mard by labst descending.
+      describe table lt_mard lines max_cnt.
+      clear idx_cnt.
+      do.
+        idx_cnt = idx_cnt + 1.
+        if idx_cnt gt max_cnt.
+          exit.
+        endif.
+        read table lt_mard index idx_cnt.
+        if sy-subrc eq 0 and i_data-xref2_hd le lt_mard-labst.
+          if p_lgort ne lt_mard-lgort.
+            c_vgpos_loc-vgbel = p_vgbel.
+            c_vgpos_loc-vgpos = p_vgpos.
+            append c_vgpos_loc.
+          endif.
+          p_lgort = lt_mard-lgort.
+          clear p_subrc.
+          exit.
+        endif.
+      enddo.
+
+  endcase.
+
+
+
+endform.                    " check_storage
+
+
+
+*&---------------------------------------------------------------------*
+*&      Form  FIX_DELIVERY
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form fix_delivery .
+
+  data : vbeln like bdcdata-fval ,
+         posnr like bdcdata-fval,
+         lfimg like bdcdata-fval,
+         vrkme like bdcdata-fval,
+         volum like bdcdata-fval,
+         voleh like bdcdata-fval,
+         flag,
+         behav(3),
+         meins like mara-meins,
+         check_name like tvarvc-name.
+  data: set_pick type c.
+
+  clear :
+         vbeln,
+         posnr,
+         lfimg,
+         vrkme,
+         volum,
+         voleh.
+
+
+  write my_lips-vbeln to vbeln left-justified.
+  write my_lips-posnr to posnr left-justified.
+
+  clear i_data.
+  read table i_data with key vbeln = my_lips-vgbel
+                             posnr = my_lips-vgpos.
+
+
+  write i_data-xref1_hd to volum left-justified.
+
+  clear t006a.
+  select single * from t006a
+  where spras = sy-langu and
+        msehi = my_lips-vrkme.
+
+  clear likp.
+  select single * from likp where vbeln = my_lips-vbeln.
+
+
+  clear behav.
+  clear check_name.
+*  CONCATENATE 'GI_NTGEW_' likp-vkorg INTO check_name.
+*  SELECT COUNT(*) FROM tvarvc WHERE name = check_name.
+*  IF sy-subrc = 0.
+*    CLEAR mara.
+*    SELECT SINGLE meins INTO meins FROM mara WHERE matnr = my_lips-matnr.
+*    IF my_lips-vrkme <> 'KG' AND meins = 'KG'.
+*      behav = 'X'.
+*    ENDIF.
+*  ENDIF.
+
+*  CLEAR flag.
+*  IF t006a-msehi = 'KG'.
+*    flag = space.
+*  ELSE.
+*    flag = 'X'.
+*  ENDIF.
+
+*@@@@@@@@@@@@@@
+  clear t006a.
+  select single * from t006a
+  where spras = sy-langu and
+        msehi = 'KG'.
+  write t006a-mseh3 to vrkme left-justified.
+
+
+  clear t006a.
+  select single * from t006a
+  where spras = sy-langu and
+        msehi = 'ST'.
+  write t006a-mseh3 to voleh left-justified.
+
+
+  data meins_x type lmnga.
+  data pc_x type lmnga.
+
+  clear pc_x.
+  clear meins_x.
+*+DT20130219 <
+  clear vbap.
+  select single * from vbap
+                    where vbeln = i_data-vbeln
+                      and posnr = i_data-posnr.
+
+  clear mara.
+  select single * from mara where matnr = vbap-matnr.
+
+  if vbap-spart = '10' or
+      vbap-spart = '40' or
+       vbap-spart = '53'.
+    move i_data-xref2_hd to meins_x. "+DT20130219
+  else.
+    if vbap-vrkme = mara-meins.
+      move i_data-xref2_hd to meins_x.
+    else.
+      move i_data-xref1_hd to meins_x.
+    endif.
+**    if vbap-vrkme = 'M' and mara-meins = 'KG'.
+**      move i_data-xref2_hd to meins_x.
+**    endif.
+  endif.
+*+DT20130219 >
+  move i_data-xref1_hd to pc_x.
+
+  call function 'ZBILL_UOM'
+    exporting
+      vbeln   = my_lips-vgbel
+      posnr   = my_lips-vgpos
+      meins   = meins_x
+      pc      = pc_x
+    importing
+      e_uom   = behav
+      e_menge = lfimg.
+  replace all occurrences of '.' in lfimg with ','.
+  data behav_x type bdc_fval.
+  data brgew type bdc_fval.
+  clear behav_x.
+
+  write behav to behav_x left-justified.
+*WRITE i_data-xref2_hd TO lfimg LEFT-JUSTIFIED.
+  clear brgew.
+
+  write meins_x to brgew left-justified.
+
+  call function 'ZFIND_BWART'
+    exporting
+      matnr   = my_lips-matnr
+      werks   = my_lips-werks
+      lgort   = my_lips-lgort
+    importing
+      bwtar   = bwtar
+      propose = propose.
+  set_pick = 'X'.
+  clear vbak.
+  select single * from vbak where vbeln = i_data-vbeln.
+
+  if vbak-auart = 'ZKA'.
+    clear set_pick.
+  endif.
+
+
+  call function 'ZZVL02N_2'
+   exporting
+     ctu                  = 'X'
+     mode                 = p_mode
+     update               = 'L'
+     vbeln_001            = vbeln
+     posnr_002            = posnr
+     g_lfimg_01_003       = lfimg
+     vrkme_01_004         = vrkme
+     volum_012            = volum
+     voleh_013            = voleh
+     flag                 = flag
+     behav                = behav_x
+     brgew                = brgew
+     set_pick             = set_pick
+     bwtar                = bwtar
+
+* IMPORTING
+*  SUBRC                =
+   tables
+     messtab              = messtab1
+            .
+
+
+
+
+
+
+endform.                    " FIX_DELIVERY
+
+
+*&---------------------------------------------------------------------*
+*&      Form  CHECK_WEIGHT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form check_weight .
+  data wa_sums like i_sums." type zorders_not_produced.
+  data my_mara type mara.
+  data tw type p decimals 3.
+  data d type p decimals 3.
+  data c_length(6) type c.
+  data n_length type p decimals 3.
+  data wa_data type ZORDERS_IDATALIN ."typ_orders.
+  data w_charg like vbap-charg.
+  data w_vbak  like vbak.
+  data wa_spart like mara-spart.
+
+  clear wa_sums.
+  read table i_sums index sums_cntrl-current_line
+  into wa_sums.
+
+  if wa_sums-xref1_hd > wa_sums-zmenge.
+    message e398(00) with text-e02.
+  endif.
+
+* Check if sales order has batch.<
+  loop at i_data into wa_data where profil = wa_sums-profil
+                                and color = wa_sums-color.
+    clear w_charg.
+    select single charg from vbap into w_charg
+                       where vbeln = wa_data-vbeln
+                         and posnr = wa_data-posnr.
+    clear w_vbak.
+    select single * from vbak
+                    into w_vbak
+                    where vbeln = wa_data-vbeln.
+    "Gia epistrofes kai retail Serbias ypoxreotikh h partida
+    if w_vbak-auart = 'ZRE' or w_vbak-auart = 'ZRTL'.
+      if w_charg is initial.
+        if w_vbak-vkorg = '9810' or w_vbak-vkorg = '9840'.
+          clear wa_spart.
+          select single spart from vbap into wa_spart
+                              where vbeln = i_data-vbeln
+                                and posnr = i_data-posnr.
+          if wa_spart <> '30' and
+              wa_spart <> '51'.
+            message e398(00) with text-e03 wa_data-vbeln wa_data-posnr.
+          endif.
+        endif.
+      endif.
+      "Gia tis ypoloipew tvn periptvsevn prepei na einai kenh
+    else.
+      if not w_charg is initial.
+        message e398(00) with text-e01 wa_data-vbeln wa_data-posnr.
+      endif.
+    endif.
+  endloop.
+* Check if sales order has batch.>
+
+  clear wa_data.
+  read table i_data into wa_data with key profil = wa_sums-profil
+                                          color = wa_sums-color.
+
+  if wa_sums-xref1_hd is not initial and
+     wa_sums-xref2_hd is not initial.
+    clear : c_length, n_length.
+    move wa_sums-length(6) to c_length.
+    replace all occurrences of ',' in c_length with '.'.
+    move c_length to n_length.
+    clear my_mara.
+    select single * into my_mara from mara
+      where matnr = wa_data-matnr.
+    clear: tw, d.
+    clear marm.
+    if my_mara-meins = 'KG'.
+      select single * from marm
+        where matnr = my_mara-matnr and
+              meinh = 'ST'.
+      if sy-subrc = 0.
+        if marm-umren ne 0
+          and my_mara-zlength ne 0.
+          tw = wa_sums-xref1_hd * marm-umrez / marm-umren
+              * n_length / my_mara-zlength.
+        endif.
+        d = abs( ( tw - wa_sums-xref2_hd ) / wa_sums-xref2_hd ).
+        if d > '0.1'.
+          clear zweighterror.
+          select single * from zweighterror
+            where vkorg = p_vkorg and
+                  bname = sy-uname and
+                  auth_type = '2' or auth_type = '3' or auth_type = '9'.
+          if sy-subrc <> 0.
+            message text-err type 'E'.
+          endif.
+        endif.
+      endif.
+    elseif my_mara-meins = 'ST'.
+      select single * from marm
+        where matnr = my_mara-matnr and
+              meinh = 'KG'.
+      if sy-subrc = 0.
+        if marm-umrez ne 0
+          and my_mara-zlength ne 0.
+          tw = wa_sums-xref1_hd * marm-umren / marm-umrez
+               * n_length / my_mara-zlength.
+        endif.
+        if wa_sums-xref2_hd ne 0.
+          d = abs( ( tw - wa_sums-xref2_hd ) / wa_sums-xref2_hd ).
+        endif.
+        if d > '0.1'.
+          clear zweighterror.
+          select single * from zweighterror
+            where vkorg = p_vkorg and
+                  bname = sy-uname and
+                  auth_type = '2' or auth_type = '3' or auth_type = '9'.
+          if sy-subrc <> 0.
+            message text-err type 'E'.
+          endif.
+        endif.
+      endif.
+    endif.
+
+
+
+  endif.
+
+endform.                    " CHECK_WEIGHT
+
+
+*&---------------------------------------------------------------------*
+*&      Form  CALC
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form calc .
+  data: t(10) type c,
+        t1(10) type c,
+        t2(10) type c.
+  data wa_sums like i_sums."type zorders_not_produced.
+  data wa_data type ZORDERS_IDATALIN."typ_orders.
+  data n_length type p decimals 3.
+  data c_length(9) type c.
+  data kel_check type c.
+
+  clear : ch, ch[].
+  clear i_data.
+  loop at i_data.
+    clear ch.
+    move-corresponding i_data to ch.
+    ch-i = 1.
+    collect ch.
+  endloop.
+
+  clear : ch_vbeln, ch_vbeln[].
+  clear i_data.
+  loop at i_data.
+    clear ch_vbeln.
+    move-corresponding i_data to ch_vbeln.
+    clear vbap.
+    select single * from vbap
+    where vbeln = i_data-vbeln and
+          posnr = i_data-posnr.
+    ch_vbeln-bedae = vbap-bedae.
+    collect ch_vbeln.
+  endloop.
+
+  if 1 = 2. "+DT20130415
+    clear ch.
+    loop at ch.
+      if ch-i > 1.
+        clear kel_check.
+        clear ch_vbeln.
+        loop at ch_vbeln where matnr = ch-matnr and
+                               color = ch-color and
+                               length = ch-length.
+          if ch_vbeln-bedae = 'KEL'.
+            kel_check = 'X'.
+          endif.
+        endloop.
+        ch-kel_check = kel_check.
+        modify ch.
+      endif.
+    endloop.
+  endif. "+DT20130415
+
+
+
+  clear wa_sums.
+  loop at i_sums into wa_sums.
+    clear ch.
+    read table ch with key profil = wa_sums-profil
+                           color = wa_sums-color
+                           length = wa_sums-length
+                           kel_check = 'X'.
+    if sy-subrc <> 0.
+
+      clear wa_data.
+      read table i_data into wa_data
+      with key profil = wa_sums-profil
+               color  = wa_sums-color
+               length = wa_sums-length.
+      clear vbap.
+      select single * from vbap
+      where vbeln = wa_data-vbeln and
+            posnr = wa_data-posnr.
+
+      clear mara.
+      select single * from mara where matnr = vbap-matnr.
+
+      if vbap-bedae = 'KEL' or vbap-bedae = 'KEK'.
+        clear s835.
+        select single * from s835
+        where vbeln = wa_data-vbeln and
+              posnr = wa_data-posnr.
+        if sy-subrc = 0.
+          if s835-zz_pc <> 0.
+            wa_sums-xref2_hd = wa_sums-xref1_hd / s835-zz_pc * s835-cmbwbest.
+          endif.
+        else.
+***          clear zetem_colour.
+***          select single * from zetem_colour
+***          where zcolour = wa_data-color.
+***          clear t.
+***          t = zetem_colour-zcolbatch.
+***          clear c_length.
+***          c_length = wa_sums-length.
+***          replace all occurrences of ',' in c_length with '.'.
+***          clear n_length.
+***          move c_length(6) to n_length.
+***          n_length = n_length * 100.
+***          clear c_length.
+***          write n_length to c_length decimals 0 left-justified.
+***          concatenate c_length(3) t into t.
+          clear t.
+          call function 'ZFIND_BATCH'
+           exporting
+             s_ord          = wa_data-vbeln
+             s_ord_it       = wa_data-posnr
+*             COLOUR_D       =
+*             LENGTH_D       =
+*             PLANT_D        =
+*             MATNR_D        =
+           importing
+             batch          = t
+                    .
+
+
+          clear mara.
+          select single * from mara where matnr = wa_data-matnr.
+          if mara-spart = '53'.
+            concatenate 'Q' t+1(9)  into t1.
+            concatenate 'Q' t+1(9) into t2.
+          else.
+            clear : t1, t2.
+            concatenate 'E' t+1(9)  into t1.
+            concatenate 'S' t+1(9) into t2.
+          endif.
+          if wa_data-charg ne ' '.
+            t1 = wa_data-charg.
+            t2 = wa_data-charg.
+          endif.
+*          clear s835.
+*
+*          select single * from s835
+*          where matnr = wa_data-matnr and
+*                werks = vbap-werks and
+*+DT20130221 get lgort from V_TVKOL.
+          clear mara.
+          select single * from mara where matnr = vbap-matnr.
+
+          clear tv_lgort.
+          select single lgort from tvkol
+                                     into tv_lgort
+                                     where werks = vbap-werks
+                                       and vstel = vbap-vstel
+                                       and raube = mara-raube.
+*+DT20130221 get lgort from V_TVKOL.
+          if tv_lgort is initial."+DT20130221
+            clear s835.
+            select single * from s835
+            where matnr = wa_data-matnr and
+                  werks = vbap-werks and
+                  vbeln = ' '      and
+                  ( charg like t1 or charg like t2 )
+              and cmbwbest > 0.
+          else. "+DT20130221
+            clear s835.
+            select single * from s835
+            where matnr = wa_data-matnr and
+                  werks = vbap-werks and
+                  lgort = tv_lgort and
+                  vbeln = ' '      and
+                    ( charg like t1 or charg like t2 )
+              and cmbwbest > 0.
+          endif.
+          if sy-subrc = 0.
+            if s835-zz_pc <> 0.
+              wa_sums-xref2_hd = wa_sums-xref1_hd / s835-zz_pc * s835-cmbwbest.
+            endif.
+          endif.
+        endif.
+      elseif vbap-bedae = 'KSV' or vbap-bedae = 'KSL' or vbap-bedae = '041'.
+**        clear zetem_colour.
+**        select single * from zetem_colour
+**        where zcolour = wa_data-color.
+**        clear t.
+**        t = zetem_colour-zcolbatch.
+**        clear c_length.
+**        c_length = wa_sums-length.
+**        replace all occurrences of ',' in c_length with '.'.
+**        clear n_length.
+**        move c_length(6) to n_length.
+**        n_length = n_length * 100.
+**        clear c_length.
+**        write n_length to c_length decimals 0 left-justified.
+**        concatenate c_length(3) t into t.
+**        clear : t1, t2.
+        clear t.
+        call function 'ZFIND_BATCH'
+           exporting
+             s_ord          = wa_data-vbeln
+             s_ord_it       = wa_data-posnr
+*             COLOUR_D       =
+*             LENGTH_D       =
+*             PLANT_D        =
+*             MATNR_D        =
+           importing
+             batch          = t
+                    .
+
+
+        clear mara.
+        select single * from mara where matnr = wa_data-matnr.
+        if mara-spart = '53'.
+          concatenate 'Q' t+1(9)  into t1.
+          concatenate 'Q' t+1(9) into t2.
+        else.
+          clear : t1, t2.
+          concatenate 'E' t+1(9)  into t1.
+          concatenate 'S' t+1(9) into t2.
+        endif.
+        if wa_data-charg ne ' '.
+          t1 = wa_data-charg.
+          t2 = wa_data-charg.
+        endif.
+*+DT20130221 get lgort from V_TVKOL.
+        clear mara.
+        select single * from mara where matnr = vbap-matnr.
+
+        clear tv_lgort.
+        select single lgort from tvkol
+                                   into tv_lgort
+                                   where werks = vbap-werks
+                                     and vstel = vbap-vstel
+                                     and raube = mara-raube.
+*+DT20130221 get lgort from V_TVKOL.
+        if tv_lgort is initial."+DT20130221
+          clear s835.
+          select single * from s835
+          where matnr = wa_data-matnr and
+                werks = vbap-werks and
+                vbeln = ' '      and
+                ( charg like t1 or charg like t2 )
+                and cmbwbest > 0.
+        else. "+DT20130221
+          clear s835.
+          select single * from s835
+          where matnr = wa_data-matnr and
+                werks = vbap-werks and
+                lgort = tv_lgort and
+                vbeln = ' '      and
+                  ( charg like t1  or charg like t2 )
+                and cmbwbest > 0.
+        endif.
+
+        if sy-subrc = 0.
+          if s835-zz_pc <> 0.
+            wa_sums-xref2_hd = wa_sums-xref1_hd / s835-zz_pc * s835-cmbwbest.
+          endif.
+        endif.
+      endif.   .
+      wa_sums-meins1 = 'ST'. "Alternatice UoM for Profiles is PCs
+      if wa_sums-xref2_hd < 0.
+        wa_sums-xref2_hd = 0.
+      endif.
+*prop_bat    "Proposed batch
+      clear wa_sums-prop_bat.
+      wa_sums-prop_bat = s835-charg.
+      if wa_sums-prop_bat is initial.
+        move t2 to wa_sums-prop_bat.
+      endif.
+      if mara-spart = '30'.
+        clear wa_sums-prop_bat.
+        wa_sums-xref2_hd = wa_sums-xref1_hd.
+      endif.
+      modify i_sums from wa_sums.
+
+    else.
+      data mess_text(200).
+      clear mess_text.
+      concatenate text-100
+                  wa_sums-profil
+                  text-101
+                  wa_sums-color
+                  text-102
+                  wa_sums-length
+                  text-103
+           into mess_text
+     separated by space.
+      message mess_text type 'W'.
+
+    endif.
+
+  endloop.
+*+DT20130215 add theoretical weight in last column.
+  perform theor_weight.
+
+endform.                    " CALC
+
+
+*&---------------------------------------------------------------------*
+*&      Form  CHECK_BLANKS
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      <--P_C1  text
+*----------------------------------------------------------------------*
+form check_blanks  changing p_c1.
+
+  clear i_sums.
+  loop at i_sums where check = 'X'. "@@@ Only specific lines
+    if i_sums-xref1_hd is initial or
+       i_sums-xref2_hd is initial.
+      p_c1 = space.
+    endif.
+  endloop.
+
+endform.                    " CHECK_BLANKS
+*&---------------------------------------------------------------------*
+*&      Form  PRINTA4
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form printa4 .
+
+*********** new way of printout *****************
+CALL FUNCTION 'ZPICK_PRINT'
+  EXPORTING
+    i_vkorg       = p_vkorg
+    sort          = p_sort
+  tables
+    gv_data       = i_data[]
+    gv_sums       = i_sums[].
+
+
+exit.
+********* new way of printout *****************
+  constants: _spart like vbap-spart value '30'..
+  data : wa_langu like sy-langu.
+  data options like itcpo.
+  data printer like itcpo-tdprinter.
+  data: _arktx like vbap-arktx,
+        _mod like sy-tabix.
+*        VSPART LIKE VBAP-SPART,
+
+  data: vlenght(15),
+        vcolor(15).
+  data wa_vbeln(10) .
+  data wa_posnr(10) .
+  data: lv_langu like sy-langu.
+  data: c_maxl like sy-tabix,
+        c_minl like sy-tabix.
+
+  c_maxl = 31.
+  c_minl = 30.
+
+**  import i_data[] from MEMORY id 'I_DATA'.
+**  import i_sums[] from memory id 'I_SUMS'.
+
+  clear options.
+  options-tddest = printer.
+  options-tdimmed = 'X'.
+
+  wa_langu = sy-langu.
+  if p_vkorg(1) = '8'.
+    wa_langu = 'E'.
+  endif.
+  if p_vkorg = '9840'.
+    wa_langu = '4'.
+  endif.
+
+  if p_vkorg = '3200' or p_vkorg = '3500' or p_vkorg = '3100'.
+    wa_langu = 'G'.
+  endif.
+
+clear V_pageno.
+old_pageno = 1.
+************** OPEN FORM A4 **************************
+  call function 'OPEN_FORM'
+    exporting
+      device                      = 'PRINTER'
+      dialog                      = 'X'
+      form                        = 'ZETEM_PICKA4'
+      language                    = wa_langu
+      options                     = options
+    exceptions
+      canceled                    = 1
+      device                      = 2
+      form                        = 3
+      options                     = 4
+      unclosed                    = 5
+      mail_options                = 6
+      archive_error               = 7
+      invalid_fax_number          = 8
+      more_params_needed_in_batch = 9
+      spool_error                 = 10
+      codepage                    = 11
+      others                      = 12.
+  if sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+  endif.
+
+
+  perform write_form using  'BOX' 'HEADER'.
+*PERFORM WRITE_FORM USING  'TITLES' 'HEADER'.
+  perform write_form using  'BOX' 'MAIN'.
+
+  if p_sort = 'X'.
+   sort i_sums by sold_to profil. "@dt20130924
+  endif.
+  sort i_data.
+  lin = 'X'.
+  clear ylines.
+  loop at i_sums.
+
+    if ylines > c_maxl.
+      clear ylines.
+    endif.
+
+    at new sold_to.
+      ylines = ylines + 1.
+      perform write_form using  'CUSTOMER' 'MAIN'.
+    endat.
+    clear i_data.
+    if not i_sums-vbeln is initial.
+      loop at i_data
+            where sold_to = i_sums-sold_to
+              and color   = i_sums-color
+              and color_up   = i_sums-color_up
+              and color_down = i_sums-color_down
+              and profil  = i_sums-profil
+              and length  = i_sums-length
+              and vrkme   = i_sums-vrkme
+              and vbeln = i_sums-vbeln
+              and posnr = i_sums-posnr.
+        .
+      endloop .
+    else.
+      loop at i_data
+          where sold_to = i_sums-sold_to
+            and color   = i_sums-color
+            and color_up   = i_sums-color_up
+            and color_down = i_sums-color_down
+            and profil  = i_sums-profil
+            and length  = i_sums-length
+            and vrkme   = i_sums-vrkme.
+      endloop .
+
+    endif.
+    ylines = ylines + 1 .
+
+    clear :lin, field2, field3.
+*Keep data temporary
+    vlenght = i_sums-length.
+    vcolor  = i_sums-color.
+
+    select single arktx spart
+           into   (_arktx,vspart)
+           from vbap
+           where  vbeln = i_data-vbeln
+             and  posnr = i_data-posnr.
+    if sy-subrc = 0.
+*      IF VSPART = _SPART.
+*        FIELD2         = _ARKTX(10).
+*        FIELD3         = _ARKTX+10(30).
+*      ELSE.
+      field3         = _arktx(40).
+*      ENDIF.
+    endif.
+* 1ST WRITE
+    write i_sums-xref1_hd decimals 0 to cpcs.
+    write i_sums-xref2_hd decimals 2 to ckg.
+    condense cpcs.
+    replace all occurences of '.'  in cpcs with ''.
+    condense ckg.
+    if cpcs = '0'. clear cpcs. endif.
+    if ckg = '0,00'. clear ckg. endif.
+
+    CALL FUNCTION 'CONTROL_FORM'
+        EXPORTING
+          command = 'PROTECT'.
+
+    perform write_form using  'ITEM' 'MAIN'.
+    if vspart = '20'.
+      ylines = ylines + 1 .
+    endif.
+* Print 2nd line
+    loop at i_data
+      where sold_to = i_sums-sold_to
+        and color   = i_sums-color
+        and color_up   = i_sums-color_up
+        and color_down = i_sums-color_down
+        and profil  = i_sums-profil
+        and length  = i_sums-length
+        and vrkme   = i_sums-vrkme.
+*@dt20130417<
+      if not i_sums-vbeln is initial.
+        check i_data-vbeln = i_sums-vbeln.
+        check i_data-posnr = i_sums-posnr.
+      endif.
+*@dt20130417>
+      write : i_data-vbeln  to wa_vbeln .
+      write : i_data-posnr  to wa_posnr .
+      concatenate wa_vbeln wa_posnr into wa_txt2
+            separated by ' / '.
+
+    clear _arktx.
+    select single arktx spart
+           into   (_arktx,vspart)
+           from vbap
+           where  vbeln = i_data-vbeln
+             and  posnr = i_data-posnr.
+    if sy-subrc = 0.
+      field3         = _arktx(40).
+    endif.
+
+
+      if p_vkorg = 8500.
+        ylines = ylines + 2.
+      else.
+          ylines = ylines + 1.
+      endif.
+
+      clear: wlines, clines.
+      if ylines < c_maxl.
+        wlines = ylines + '0.2'.
+        write wlines to clines.
+        condense clines.
+        translate clines using ',.'.
+      endif.
+      perform write_form using  'ITEM2' 'MAIN'.
+    endloop .
+
+      CALL FUNCTION 'CONTROL_FORM'
+        EXPORTING
+          command = 'ENDPROTECT'.
+
+     if v_pageno <> old_pageno.
+       clear ylines.
+       old_pageno = v_pageno.
+       perform write_form using  'BOX' 'MAIN'.
+     endif.
+
+  endloop.
+  if p_vkorg <> '9840'.
+    write sy-uname to issued_by.
+    write sy-datum to issued_date.
+  endif.
+  perform write_form using  'ISSUED' 'SIGN'.
+
+************** CLOSE FORM A4 **************************
+
+  call function 'CLOSE_FORM'
+* IMPORTING
+*   RESULT                         =
+*   RDI_RESULT                     =
+* TABLES
+*   OTFDATA                        =
+    exceptions
+      unopened                       = 1
+      bad_pageformat_for_print       = 2
+      send_error                     = 3
+      spool_error                    = 4
+      codepage                       = 5
+      others                         = 6
+             .
+  if sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+  endif.
+
+endform.                                                    " PRINTA4
+*&---------------------------------------------------------------------*
+*&      Form  WRITE_FORM
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_7817   text
+*      -->P_7818   text
+*----------------------------------------------------------------------*
+form write_form using element window.
+  call function 'WRITE_FORM'
+    exporting
+      element                  = element
+      window                   = window
+    exceptions
+      element                  = 1
+      function                 = 2
+      type                     = 3
+      unopened                 = 4
+      unstarted                = 5
+      window                   = 6
+      bad_pageformat_for_print = 7
+      others                   = 8.
+endform.                    " WRITE_FORM
+*&---------------------------------------------------------------------*
+*&      Form  GET_OLD_MATNR
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form get_old_matnr .
+
+  data  : lt_wmdvsx   like bapiwmdvs   occurs 0 with header line.
+  data  : lt_wmdvex   like bapiwmdve   occurs 0 with header line.
+  data  : lv_meins    type vrkme.
+  data: tline like tline occurs 0 with header line.
+
+  data: wtabix like sy-tabix,
+        wa_name like thead-tdname,
+        charg type charg_d.
+
+  data: kg  type  menge_d,
+        pc  type  zzzz_zpc,
+        sum_kg type  menge_d.
+
+  loop at i_data.
+    wtabix = sy-tabix.
+
+    clear vbap.
+    select single * from vbap where vbeln = i_data-vbeln
+                                and posnr = i_data-posnr.
+
+    clear mara.
+    select single * from mara where matnr = vbap-matnr.
+
+    if mara-spart = '30' or
+        mara-matkl = '8900' or
+         mara-matkl = 'CO_E-97VF'.
+      case vbak-vkorg.
+        when '3200'.
+          i_data-oldmat = mara-bismt.
+        when '3500'.
+          i_data-oldmat = mara-bismt.
+        when '3100'.
+          i_data-oldmat = mara-bismt.
+        when '8500'.
+          i_data-oldmat = mara-zbismt_bg.
+        when '9840'.
+          i_data-oldmat = mara-zbismt_ro.
+        when '9810'.
+          i_data-oldmat = mara-zbismt_sh.
+
+      endcase.
+    endif.
+
+
+
+    if vbap-spart = '33'. "-DT20130418 was 30
+      clear vbak.
+      select single * from vbak where vbeln = i_data-vbeln.
+
+
+      move i_data-matnr to wa_name.
+
+
+**      call function 'READ_TEXT'
+**        exporting
+***      CLIENT                        = SY-MANDT
+**          id                            = 'GRUN'
+**          language                      = 'E'
+**          name                          = wa_name
+**          object                        = 'MATERIAL'
+***      ARCHIVE_HANDLE                = 0
+***      LOCAL_CAT                     = ' '
+***    IMPORTING
+***      HEADER                        =
+**        tables
+**          lines                         = tline
+**        exceptions
+**          id                            = 1
+**          language                      = 2
+**          name                          = 3
+**          not_found                     = 4
+**          object                        = 5
+**          reference_check               = 6
+**          wrong_access_to_archive       = 7
+**       others                        = 8
+**              .
+**
+**      if sy-subrc = 0.
+**        clear i_data-oldmat.
+**        loop at tline.
+**          concatenate i_data-oldmat tline-tdline into i_data-oldmat.
+**        endloop.
+
+      clear mara.
+      select single * from mara where matnr = vbap-matnr.
+
+      case vbak-vkorg.
+        when '3200'.
+          i_data-oldmat = mara-bismt.
+        when '3500'.
+          i_data-oldmat = mara-bismt.
+        when '3100'.
+          i_data-oldmat = mara-bismt.
+        when '8500'.
+          i_data-oldmat = mara-zbismt_bg.
+        when '9840'.
+          i_data-oldmat = mara-zbismt_ro.
+        when '9810'.
+          i_data-oldmat = mara-zbismt_sh.
+
+      endcase.
+
+*      endif.
+*** Also get availability QTY<
+      clear : lt_wmdvsx, lt_wmdvex,
+              lt_wmdvsx[], lt_wmdvex[].
+
+      call function 'BAPI_MATERIAL_AVAILABILITY'
+        exporting
+          plant      = vbap-werks
+          material   = i_data-matnr
+          unit       = 'ST'
+          check_rule = 'A'
+*          STGE_LOC   = I_MARA-LGORT
+*          BATCH      = I_BATCH-CHARG
+*        IMPORTING
+*          AV_QTY_PLT = LV_CLABS
+*          RETURN     = LS_RETURN
+        tables
+          wmdvsx     = lt_wmdvsx
+          wmdvex     = lt_wmdvex.
+
+      if not lt_wmdvex[] is initial.
+        read table lt_wmdvex index 1.
+* CORRECTION FOR BAPI PROBLEM
+        if lt_wmdvex-com_qty > 1111111111.
+          lt_wmdvex-com_qty = 0.
+          modify lt_wmdvex index sy-tabix.
+        endif.
+
+        if lt_wmdvex-req_qty > 1111111111.
+          lt_wmdvex-req_qty = 0.
+          modify lt_wmdvex index sy-tabix.
+        endif.
+* CORRECTION FOR BAPI PROBLEM
+        i_data-av_qty = lt_wmdvex-com_qty.
+      endif.
+*** Also get availability QTY>
+
+      modify i_data index wtabix.
+    else.
+*@dt20130417 <
+      clear vbap.
+      select single * from vbap where vbeln = i_data-vbeln
+                                  and posnr = i_data-posnr.
+      clear charg.
+      call function 'ZFIND_BATCH'
+        exporting
+          s_ord    = i_data-vbeln
+          s_ord_it = i_data-posnr
+        importing
+          batch    = charg.
+
+
+      clear lv_meins.
+      call function 'ZBILL_UOM'
+        exporting
+          vbeln           = i_data-vbeln
+          posnr           = i_data-posnr
+          meins           = 1
+          pc              = 2
+       importing
+         e_uom           =  lv_meins
+*         E_MENGE         =
+*         E_MENGE_N       =
+                .
+
+      clear mara.
+      select single * from mara where matnr = vbap-matnr.
+
+      clear tvkol.
+      select single * from tvkol where werks = vbap-werks
+                                   and vstel = vbap-vstel
+                                   and raube = mara-raube.
+      clear: kg, pc.
+**      if vbap-bedae = 'KEL'.
+**      call function 'ZETEM_STOCK2UNITS_MATERIAL'
+**        exporting
+**          werks = vbap-werks
+**          matnr = vbap-matnr
+**          lgort = tvkol-lgort
+**          charg = charg
+**          kdauf = i_data-vbeln
+**          kdpos = i_data-posnr
+**        importing
+***          wpp_a = wpp_a
+**          kg    = kg
+**          pc    = pc.
+**      else.
+
+      call function 'ZETEM_STOCK2UNITS_MATERIAL'
+        exporting
+          werks = vbap-werks
+          matnr = vbap-matnr
+          lgort = tvkol-lgort
+          charg = charg
+        importing
+*          wpp_a = wpp_a
+          kg    = kg
+          pc    = pc.
+**      endif.
+      if lv_meins = 'ST'.
+        i_data-av_qty = pc.
+      else.
+        i_data-av_qty = kg.
+      endif.
+      write lv_meins to i_data-av_mm.
+      if vbap-spart = '30'.
+        clear mara.
+        select single * from mara where matnr = vbap-matnr.
+        write mara-meins to i_data-av_mm.
+        if kg = 0.
+          clear sum_kg.
+          select * from mbew where matnr = vbap-matnr
+                               and bwkey = vbap-werks
+                               and bwtar <> ''.
+            charg = mbew-bwtar.
+            call function 'ZETEM_STOCK2UNITS_MATERIAL'
+           exporting
+             werks = vbap-werks
+             matnr = vbap-matnr
+             lgort = tvkol-lgort
+             charg = charg
+           importing
+*          wpp_a = wpp_a
+             kg    = kg.
+*          pc    = pc.
+            sum_kg = sum_kg + kg.
+          endselect.
+          kg = sum_kg.
+          i_data-av_qty = kg.
+        endif.
+      endif.
+*@DT20131112 ADD SP.STOCK IN PRINTOUT.
+      IF NOT I_DATA-VBELN IS INITIAL.
+        clear s835.
+        select single * from s835 where vbeln = i_data-vbeln
+                                    and posnr = i_data-posnr.
+
+        i_data-sp_stock = s835-CMBWBEST.
+        if i_data-av_mm = 'PC'.
+          move s835-zz_pc to i_data-sp_stock.
+        endif.
+      ENDIF.
+      modify i_data index wtabix.
+*@dt20130417 >
+    endif.
+  endloop.
+
+endform.                    " GET_OLD_MATNR
+*&---------------------------------------------------------------------*
+*&      Form  THEOR_WEIGHT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form theor_weight .
+
+  data: wa_sums like i_sums occurs 0 with header line,
+        wa_data like i_data occurs 0 with header line.
+  data n_length type p decimals 3.
+  data c_length(9) type c.
+  data zlength like mara-zlength.
+  data ztabix like sy-tabix.
+  data wpp  like  mseg-menge.
+  data: t(10) type c,
+        t1(10) type c,
+        t2(10) type c.
+
+  clear wa_sums.
+  loop at i_sums into wa_sums.
+    ztabix = sy-tabix.
+    clear ch.
+    read table ch with key profil = wa_sums-profil
+                           color = wa_sums-color
+                           length = wa_sums-length
+                           kel_check = 'X'.
+    if sy-subrc <> 0.
+
+      clear wa_data.
+      read table i_data into wa_data
+      with key profil = wa_sums-profil
+               color = wa_sums-color.
+      clear vbak.
+      select single * from vbak
+      where vbeln = wa_data-vbeln.
+      clear vbap.
+      select single * from vbap
+      where vbeln = wa_data-vbeln and
+            posnr = wa_data-posnr.
+
+      clear mara.
+      select single * from mara where matnr = vbap-matnr.
+
+      clear c_length.
+      c_length = wa_sums-length.
+      replace all occurrences of ',' in c_length with '.'.
+      clear zlength.
+      move c_length(6) to zlength.
+      if vbap-spart = '10' or
+          vbap-spart = '40' or
+           vbap-spart = '53'.
+
+
+        clear wpp.
+        call function 'ZWEIGHT_P_PC'
+          exporting
+            matnr                        = vbap-matnr
+            length                       = zlength
+         importing
+           wpp                          = wpp
+*         RATIO                        =
+         exceptions
+           colour_does_not_exist        = 1
+           profile_does_not_exist       = 2
+           packaging_o_n                = 3
+           others                       = 4
+                  .
+        if sy-subrc <> 0.
+        else.
+          if vbap-vrkme = 'ST'.
+            wa_sums-theorqty = wpp * wa_sums-xref1_hd.
+            modify i_sums from wa_sums.
+          endif.
+        endif.
+*Especially for returns Weight = Theor.Weight.
+        if vbak-auart = 'ZRE' or vbak-auart = 'ZKR'.
+          wa_sums-xref2_hd = wa_sums-theorqty.
+          modify i_sums from wa_sums.
+        endif.
+      else.
+        if vbap-vrkme = mara-meins.
+          wa_sums-xref2_hd = wa_sums-xref1_hd.
+          wa_sums-meins1 = mara-meins.
+          modify i_sums from wa_sums.
+        else.
+          clear marm.
+          select single * from marm
+                         where matnr = vbap-matnr
+                           and meinh = vbap-vrkme.
+
+          wa_sums-xref2_hd = ( wa_sums-xref1_hd * marm-umrez ) / marm-umren.
+          wa_sums-meins1 = mara-meins.
+          modify i_sums from wa_sums.
+        endif.
+      endif.
+
+
+    endif.
+  endloop.
+
+
+endform.                    " THEOR_WEIGHT
+*&---------------------------------------------------------------------*
+*&      Form  SELA
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form sela .
+  loop at i_sums.
+    i_sums-check = 'X'.
+    modify i_sums.
+  endloop.
+
+
+
+endform.                    " SELA
+*&---------------------------------------------------------------------*
+*&      Form  DSELA
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form dsela .
+  loop at i_sums.
+    clear i_sums-check.
+    modify i_sums.
+  endloop.
+
+endform.                    " DSELA
+
+FORM F_SEND_PAGEN0 tables ITAB structure ITCSY
+                          OTAB structure ITCSY.
+READ TABLE ITAB WITH KEY NAME = 'PAGE'.
+IF SY-SUBRC = 0.
+  condense itab-value.
+  V_pageno = itab-value.
+  export v_pageno to memory id 'V_PAGE'.
+ENDIF.
+READ TABLE ITAB WITH KEY NAME = 'TDLINENR'.
+IF SY-SUBRC = 0.
+  break dtablalis.
+endif.
+
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  CREATE_ISUMS
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM CREATE_ISUMS .
+loop at i_data .
+
+    clear i_sums .
+    i_sums-sold_to  = i_data-sold_to  .
+    i_sums-profil   = i_data-profil   .
+    i_sums-length   = i_data-length   .
+    i_sums-color    = i_data-color    .
+    i_sums-color_up   = i_data-color_up.
+    i_sums-color_down = i_data-color_down.
+    i_sums-vrkme    = i_data-vrkme    .
+    i_sums-zmenge   = i_data-zmenge   .
+    "i_sums-xref1_hd = i_data-xref1_hd .
+    "i_sums-xref2_hd = i_data-xref2_hd .
+    i_sums-vmeng    = i_data-vmeng. "ARISK+
+    "Ship to for Bulgaria.
+     if p_vkorg(2) = '85'.
+       i_sums-ship_to  = i_data-ship_to  .
+       CONDENSE i_sums-ship_to.
+       clear i_sums-po_num.
+       select single BSTKD from vbkd
+                           into i_sums-po_num
+                           where vbeln = i_data-vbeln.
+     endif.
+*+DT20130415<
+    clear vbap.
+    select single * from vbap where vbeln = i_data-vbeln
+                                and posnr = i_data-posnr.
+   if vbap-bedae = 'KEL'.
+      i_sums-vbeln = vbap-vbeln.
+      i_sums-posnr = vbap-posnr.
+      append i_sums.
+    else.
+*@dt20141021 special case for PVC(53) of romania <
+      clear wa_vkorg.
+      select single vkorg from vbak into wa_vkorg
+                         where vbeln = i_data-vbeln.
+      if wa_vkorg = '9840' and vbap-spart = '53'.
+         i_sums-vbeln = vbap-vbeln.
+         i_sums-posnr = vbap-posnr.
+         append i_sums.
+      else.
+
+*@dt20141021 special case for PVC(53) of romania >
+        collect i_sums .
+      endif.
+    endif.
+*+DT20130415>
+  endloop .
+  loop at i_sums where zmenge < 0 .
+    clear i_sums-zmenge .
+    modify i_sums .
+  endloop .
+
+* =================> Enhancement 21-03-2007 <===============
+  if p_sort = 'X'.
+   sort i_sums by color profil . "@dt20130924
+  endif.
+  sort i_data by vbeln posnr .
+* =================>end of Enhancement 21-03-2007 <=========
+ENDFORM.                    " CREATE_ISUMS
+*&---------------------------------------------------------------------*
+*&      Form  COPY_QTY
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM COPY_QTY .
+*  data: lv_tabix like sy-tabix.
+  loop at i_sums.
+    move i_sums-zmenge to i_sums-xref1_hd.
+    modify i_sums index sy-tabix.
+  endloop.
+
+
+ENDFORM.                    " COPY_QTY
