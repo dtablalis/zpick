@@ -1,3 +1,25 @@
+*&---------------------------------------------------------------------
+*
+*& NOT PRODUCED ORDERS                                                 *
+*                                                                      *
+*&---------------------------------------------------------------------*
+*& Author      : D. Tsamados REAL Consulting                           *
+*                                                                      *
+*& Date        : 4/12/03                                               *
+*&                                                                     *
+*& Description : Not Produced Order Report                             *
+*  Changes     : 20/10/2004 Marked 'ARISK + OR -'
+*  Changes     : 05/10/2005 Mathew Gaitis Marked 'mga + OR -'
+*&---------------------------------------------------------------------*
+* 20050606, teka, tatalias nikos, changes for live - interim
+*&---------------------------------------------------------------------*
+* 22/10/2008 TEKA, Dimitris Papadimitriou MARKED DP
+*            Highlight Weight Differences
+* 27/1/2016 Changed by D.Tablalis
+*  Print via f.module
+*&---------------------------------------------------------------------*
+
+
 report zelv_orders_not_produced
   no standard page heading
 *  line-size 255
@@ -100,7 +122,8 @@ types: begin of typ_move,
 
 data: wa_vkorg like vbak-vkorg,
       V_pageno like sy-tabix,
-      old_pageno like sy-tabix.
+      old_pageno like sy-tabix,
+      gv_bedae like vbap-bedae. "Proc.key
 
 **data : begin of i_sums occurs 0.
 **        include structure zorders_not_produced.
@@ -4427,6 +4450,21 @@ endform.                    " CHECK_BLANKS
 *----------------------------------------------------------------------*
 form printa4 .
 
+data : x_sums like TABLE OF ZORDERS_ISUMS with HEADER LINE.
+data : x_data type table of ZORDERS_IDATALIN WITH HEADER LINE .
+
+"@dt20170616<<<************************************************
+** if user selects some lines then print these lines**************
+loop at i_sums where check = 'X'.
+  x_sums = i_sums.
+  append x_sums.
+endloop.
+
+if x_sums[] is initial.
+  x_sums[] = i_sums[].
+endif.
+"@dt20170616>>>
+***********************************************************************
 *********** new way of printout *****************
 CALL FUNCTION 'ZPICK_PRINT'
   EXPORTING
@@ -4434,11 +4472,11 @@ CALL FUNCTION 'ZPICK_PRINT'
     sort          = p_sort
   tables
     gv_data       = i_data[]
-    gv_sums       = i_sums[].
+    gv_sums       = x_sums[].
 
 
 exit.
-********* new way of printout *****************
+********* end of NEW WAY of printout *****************
   constants: _spart like vbap-spart value '30'..
   data : wa_langu like sy-langu.
   data options like itcpo.
@@ -4606,7 +4644,14 @@ old_pageno = 1.
 *@dt20130417>
       write : i_data-vbeln  to wa_vbeln .
       write : i_data-posnr  to wa_posnr .
-      concatenate wa_vbeln wa_posnr into wa_txt2
+      "Requirement type in sales item
+      clear gv_bedae.
+      select single bedae into gv_bedae
+                  from vbap
+                 where vbeln = i_data-vbeln
+                   and posnr = i_data-posnr.
+     "Requirement type in sales item
+      concatenate wa_vbeln wa_posnr gv_bedae into wa_txt2
             separated by ' / '.
 
     clear _arktx.
@@ -5121,7 +5166,6 @@ ENDFORM.
 *----------------------------------------------------------------------*
 FORM CREATE_ISUMS .
 loop at i_data .
-
     clear i_sums .
     i_sums-sold_to  = i_data-sold_to  .
     i_sums-profil   = i_data-profil   .
