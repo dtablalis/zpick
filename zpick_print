@@ -1,0 +1,256 @@
+FUNCTION ZPICK_PRINT.
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     REFERENCE(I_VKORG) TYPE  VKORG
+*"     REFERENCE(MATDOC) TYPE  MBLNR OPTIONAL
+*"     REFERENCE(DIALOG) TYPE  FLAG OPTIONAL
+*"     REFERENCE(SORT) TYPE  FLAG DEFAULT 'X'
+*"  TABLES
+*"      GV_DATA TYPE  ZORDERS_IDATA
+*"      GV_SUMS TYPE  ZORDERS_ISUMST
+*"----------------------------------------------------------------------
+data: lv_dialog type c.
+i_data[] = gv_data[].
+i_sums[] = gv_sums[].
+
+ p_vkorg = i_vkorg.
+ c_maxl = 31.
+ c_minl = 30.
+
+ clear options.
+ options-tddest = printer.
+ options-tdimmed = 'X'.
+ options-tdprogram = sy-repid.
+
+  wa_langu = sy-langu.
+  if p_vkorg(1) = '8'.
+    wa_langu = 'E'.
+  endif.
+  if p_vkorg = '9840'.
+    wa_langu = '4'.
+  endif.
+
+  if p_vkorg = '3200' or p_vkorg = '3500' or p_vkorg = '3100'.
+    wa_langu = 'G'.
+  endif.
+
+
+if dialog is SUPPLIED.
+ lv_dialog  = dialog.
+else.
+  lv_dialog = 'X'.
+endif.
+
+
+clear v_pageno.
+old_pageno = 1.
+************** OPEN FORM A4 **************************
+  call function 'OPEN_FORM'
+    exporting
+      device                      = 'PRINTER'
+      dialog                      =  lv_dialog
+      form                        = 'ZETEM_PICKA4'
+      language                    = wa_langu
+      options                     = options
+    exceptions
+      canceled                    = 1
+      device                      = 2
+      form                        = 3
+      options                     = 4
+      unclosed                    = 5
+      mail_options                = 6
+      archive_error               = 7
+      invalid_fax_number          = 8
+      more_params_needed_in_batch = 9
+      spool_error                 = 10
+      codepage                    = 11
+      others                      = 12.
+  if sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+  endif.
+
+
+  perform write_form using  'BOX' 'HEADER'.
+*PERFORM WRITE_FORM USING  'TITLES' 'HEADER'.
+  perform write_form using  'BOX' 'MAIN'.
+
+  if sort = 'X'.
+   sort i_sums by sold_to profil. "@dt20130924
+  endif.
+  sort i_data.
+  lin = 'X'.
+  clear ylines.
+  loop at i_sums.
+
+    if ylines > 31.
+      clear ylines.
+    endif.
+    ship_to = i_sums-ship_to.
+    po_num = i_sums-po_num.
+    at new sold_to.
+      ylines = ylines + 1.
+      perform write_form using  'CUSTOMER' 'MAIN'.
+    endat.
+    clear i_data.
+    if not i_sums-vbeln is initial.
+      loop at i_data
+            where sold_to = i_sums-sold_to
+              and color   = i_sums-color
+              and color_up   = i_sums-color_up
+              and color_down = i_sums-color_down
+              and profil  = i_sums-profil
+              and length  = i_sums-length
+              and vrkme   = i_sums-vrkme
+              and vbeln = i_sums-vbeln
+              and posnr = i_sums-posnr.
+        .
+      endloop .
+    else.
+      loop at i_data
+          where sold_to = i_sums-sold_to
+            and color   = i_sums-color
+            and color_up   = i_sums-color_up
+            and color_down = i_sums-color_down
+            and profil  = i_sums-profil
+            and length  = i_sums-length
+            and vrkme   = i_sums-vrkme.
+      endloop .
+
+    endif.
+
+    perform write_text using i_data-vbeln.
+
+    ylines = ylines + 1 .
+
+    clear :lin, field2, field3.
+*Keep data temporary
+    vlenght = i_sums-length.
+    vcolor  = i_sums-color.
+
+    select single arktx spart
+           into   (_arktx,vspart)
+           from vbap
+           where  vbeln = i_data-vbeln
+             and  posnr = i_data-posnr.
+    if sy-subrc = 0.
+*      IF VSPART = _SPART.
+*        FIELD2         = _ARKTX(10).
+*        FIELD3         = _ARKTX+10(30).
+*      ELSE.
+      field3         = _arktx(40).
+*      ENDIF.
+    endif.
+* 1ST WRITE
+    write i_sums-xref1_hd decimals 0 to cpcs.
+    write i_sums-xref2_hd decimals 3 to ckg.
+    condense cpcs.
+    replace all occurences of '.'  in cpcs with ''.
+    condense ckg.
+    if cpcs = '0'. clear cpcs. endif.
+    if ckg = '0,000'. clear ckg. endif.
+
+    CALL FUNCTION 'CONTROL_FORM'
+        EXPORTING
+          command = 'PROTECT'.
+
+    perform write_form using  'ITEM' 'MAIN'.
+    if vspart = '20'.
+      ylines = ylines + 1 .
+    endif.
+* Print 2nd line
+    loop at i_data
+      where sold_to = i_sums-sold_to
+        and color   = i_sums-color
+        and color_up   = i_sums-color_up
+        and color_down = i_sums-color_down
+        and profil  = i_sums-profil
+        and length  = i_sums-length
+        and vrkme   = i_sums-vrkme.
+*@dt20130417<
+      if not i_sums-vbeln is initial.
+        check i_data-vbeln = i_sums-vbeln.
+        check i_data-posnr = i_sums-posnr.
+      endif.
+*@dt20130417>
+      write : i_data-vbeln  to wa_vbeln .
+      write : i_data-posnr  to wa_posnr .
+      concatenate wa_vbeln wa_posnr into wa_txt2
+            separated by ' / '.
+
+    clear _arktx.
+    select single arktx spart
+           into   (_arktx,vspart)
+           from vbap
+           where  vbeln = i_data-vbeln
+             and  posnr = i_data-posnr.
+    if sy-subrc = 0.
+      field3         = _arktx(40).
+    endif.
+
+
+      if p_vkorg = 8500.
+        ylines = ylines + 2.
+      else.
+          ylines = ylines + 1.
+      endif.
+
+      clear: wlines, clines.
+      if ylines < c_maxl.
+        wlines = ylines + '0.2'.
+        write wlines to clines.
+        condense clines.
+        translate clines using ',.'.
+      endif.
+      free memory id 'V_PAGE'.
+      perform write_form using  'ITEM2' 'MAIN'.
+      import v_pageno from memory id 'V_PAGE'.
+    endloop .
+
+      CALL FUNCTION 'CONTROL_FORM'
+        EXPORTING
+          command = 'ENDPROTECT'.
+
+     if v_pageno <> old_pageno.
+       clear ylines.
+       old_pageno = v_pageno.
+       perform write_form using  'BOX' 'MAIN'.
+     endif.
+
+  endloop.
+  if p_vkorg <> '9840'.
+    write sy-uname to issued_by.
+    write sy-datum to issued_date.
+  endif.
+
+  MAT_DOC = MATDOC.
+  perform write_form using  'MAT_DOC' 'COMMENTS'.
+  perform write_form using  'ISSUED' 'SIGN'.
+************** CLOSE FORM A4 **************************
+
+  call function 'CLOSE_FORM'
+* IMPORTING
+*   RESULT                         =
+*   RDI_RESULT                     =
+* TABLES
+*   OTFDATA                        =
+    exceptions
+      unopened                       = 1
+      bad_pageformat_for_print       = 2
+      send_error                     = 3
+      spool_error                    = 4
+      codepage                       = 5
+      others                         = 6
+             .
+  if sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+  endif.
+
+
+
+
+
+
+ENDFUNCTION.
