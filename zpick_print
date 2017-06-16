@@ -11,6 +11,8 @@ FUNCTION ZPICK_PRINT.
 *"      GV_SUMS TYPE  ZORDERS_ISUMST
 *"----------------------------------------------------------------------
 data: lv_dialog type c.
+data: gv_bedae like vbap-bedae.
+
 i_data[] = gv_data[].
 i_sums[] = gv_sums[].
 
@@ -175,9 +177,17 @@ old_pageno = 1.
       endif.
 *@dt20130417>
       write : i_data-vbeln  to wa_vbeln .
-      write : i_data-posnr  to wa_posnr .
-      concatenate wa_vbeln wa_posnr into wa_txt2
+      write : i_data-posnr  to wa_posnr no-ZERO.
+      "Requirement type in sales item
+      clear gv_bedae.
+      select single bedae into gv_bedae
+                  from vbap
+                 where vbeln = i_data-vbeln
+                   and posnr = i_data-posnr.
+     "Requirement type in sales item
+      concatenate wa_vbeln wa_posnr gv_bedae into wa_txt2
             separated by ' / '.
+     condense wa_txt2.
 
     clear _arktx.
     select single arktx spart
